@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import org.joml.Matrix4f;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
 import site.leawsic.livehelper.mixin.GameRendererAccessor;
@@ -58,9 +59,7 @@ public class StreamInstance implements AutoCloseable {
         if (mc.level == null || mc.player == null) return;
 
         FrameCommand computed = engine.computeFrame();
-        if (computed != null) {
-            lastCommand = computed;
-        }
+        if (computed != null) lastCommand = computed;
         FrameCommand cmd = lastCommand;
         if (cmd == null) return;
 
@@ -78,8 +77,17 @@ public class StreamInstance implements AutoCloseable {
             renderTarget.bindWrite(true);
             RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
             renderTarget.clear(Minecraft.ON_OSX);
+
             CameraSetup.apply(dummyCamera, cmd, config.width(), config.height(), config.renderDistance());
 
+            // ── Prepare cull frustum for virtual camera ──
+            float aspect = (float) config.width() / (float) config.height();
+            float fovRad = (float) Math.toRadians(cmd.fov());
+            float farPlane = config.renderDistance() * 16f;
+            Matrix4f projection = new Matrix4f().perspective(fovRad, aspect, 0.05f, farPlane);
+            mc.levelRenderer.prepareCullFrustum(new PoseStack(), dummyCamera.getPosition(), projection);
+
+            // ── Render only the world (no GUI, no hand) ──
             ActiveRenderContext.runWithContext(cmd, config.width(), config.height(), config.renderDistance(), () ->
                 mc.gameRenderer.renderLevel(1.0F, System.nanoTime(), new PoseStack())
             );

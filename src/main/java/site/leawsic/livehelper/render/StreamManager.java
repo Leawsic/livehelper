@@ -11,26 +11,41 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public enum StreamManager {
     INSTANCE;
 
     private final Map<Integer, StreamInstance> activeStreams = new ConcurrentHashMap<>();
-    private final Set<Integer> pendingStarts = ConcurrentHashMap.newKeySet();
-    private final Set<Integer> pendingStops = ConcurrentHashMap.newKeySet();
 
     public void start(int managerId) {
         Minecraft mc = Minecraft.getInstance();
-        if (!mc.isSameThread()) {
-            if (activeStreams.containsKey(managerId) || !pendingStarts.add(managerId)) return;
-            mc.execute(() -> {
-                pendingStarts.remove(managerId);
-                startOnMainThread(managerId);
-            });
+        if (mc.isSameThread()) {
+            startOnMainThread(managerId);
             return;
         }
-        startOnMainThread(managerId);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        mc.execute(() -> {
+            try {
+                startOnMainThread(managerId);
+                future.complete(null);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+        try {
+            future.get(2, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            LiveHelper.LOGGER.warn("Start manager {} timed out", managerId);
+        } catch (CancellationException e) {
+            // ignored
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to start manager " + managerId, e);
+        }
     }
 
     private synchronized void startOnMainThread(int managerId) {
@@ -38,20 +53,15 @@ public enum StreamManager {
             LiveHelper.LOGGER.warn("Manager {} is already running", managerId);
             return;
         }
-
         Manager manager = StorageManager.getInstance().getManager(managerId);
         if (manager == null) {
             throw new IllegalArgumentException("Manager not found: " + managerId);
         }
-
         Map<Integer, Clip> clipCache = new HashMap<>();
         for (var slot : manager.clips()) {
             Clip clip = StorageManager.getInstance().getClip(slot.clipId());
-            if (clip != null) {
-                clipCache.put(slot.clipId(), clip);
-            }
+            if (clip != null) clipCache.put(slot.clipId(), clip);
         }
-
         PlaybackEngine engine = new PlaybackEngine(manager, clipCache);
         StreamInstance instance = new StreamInstance(managerId, manager, engine);
         activeStreams.put(managerId, instance);
@@ -60,16 +70,28 @@ public enum StreamManager {
 
     public void stop(int managerId) {
         Minecraft mc = Minecraft.getInstance();
-        if (!mc.isSameThread()) {
-            pendingStarts.remove(managerId);
-            if (!pendingStops.add(managerId)) return;
-            mc.execute(() -> {
-                pendingStops.remove(managerId);
-                stopOnMainThread(managerId);
-            });
+        if (mc.isSameThread()) {
+            stopOnMainThread(managerId);
             return;
         }
-        stopOnMainThread(managerId);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        mc.execute(() -> {
+            try {
+                stopOnMainThread(managerId);
+                future.complete(null);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+        try {
+            future.get(2, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            LiveHelper.LOGGER.warn("Stop manager {} timed out", managerId);
+        } catch (CancellationException e) {
+            // ignored
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to stop manager " + managerId, e);
+        }
     }
 
     private synchronized void stopOnMainThread(int managerId) {
@@ -82,9 +104,12 @@ public enum StreamManager {
 
     public synchronized void stopAll() {
         for (int id : new ArrayList<>(activeStreams.keySet())) {
-            stop(id);
+            StreamInstance instance = activeStreams.get(id);
+            if (instance != null) {
+                instance.close();
+                activeStreams.remove(id);
+            }
         }
-        pendingStarts.clear();
     }
 
     public boolean hasActive() {
@@ -106,8 +131,6 @@ public enum StreamManager {
     }
 
     public enum StreamStatus {
-        RUNNING,
-        STOPPED,
-        ERROR
+        RUNNING, STOPPED
     }
 }
