@@ -1,20 +1,34 @@
 package site.leawsic.livehelper.engine.templates;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.reflect.TypeToken;
 import org.joml.Quaternionf;
 import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.util.AngleConvert;
 
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
 
 import static site.leawsic.livehelper.engine.templates.MotionTemplates.*;
 
 public class PathTemplate implements MotionTemplate {
+    private static final Gson GSON = new Gson();
+    private static final Type KEYFRAME_LIST_TYPE = new TypeToken<List<Keyframe>>() {}.getType();
+
     public record Keyframe(float t, double x, double y, double z, float rx, float ry, float rz) {}
 
     @Override
     public FrameCommand evaluate(Map<String, Object> params, float progress) {
-        throw new UnsupportedOperationException("PATH template requires pre-parsed keyframes");
+        Object raw = params == null ? null : params.get("keyframes");
+        if (raw == null) throw new IllegalArgumentException("PATH template requires keyframes");
+
+        JsonElement element = raw instanceof String string
+            ? GSON.fromJson(string, JsonElement.class)
+            : GSON.toJsonTree(raw);
+        List<Keyframe> keyframes = GSON.fromJson(element, KEYFRAME_LIST_TYPE);
+        return evaluateFromKeyframes(keyframes, progress, pf(params, "fov", 70f));
     }
 
     public static FrameCommand evaluateFromKeyframes(List<Keyframe> keyframes, float progress, float fov) {
@@ -27,19 +41,20 @@ public class PathTemplate implements MotionTemplate {
             return new FrameCommand(kf.x, kf.y, kf.z, q.x, q.y, q.z, q.w, fov);
         }
 
-        int idx = 0;
+        progress = Math.max(0f, Math.min(0.9999f, progress));
+        int idx = keyframes.size() - 2;
         for (int i = 0; i < keyframes.size() - 1; i++) {
             if (progress >= keyframes.get(i).t && progress < keyframes.get(i + 1).t) {
                 idx = i;
                 break;
             }
         }
-        if (progress >= keyframes.get(idx + 1).t) idx = keyframes.size() - 2;
 
         Keyframe a = keyframes.get(idx);
         Keyframe b = keyframes.get(idx + 1);
-        float localT = (progress - a.t) / (b.t - a.t);
-        float eased = ease(localT, "easeInOut");
+        float span = b.t - a.t;
+        float localT = span <= 0.00001f ? 0f : (progress - a.t) / span;
+        float eased = ease(Math.max(0f, Math.min(1f, localT)), "easeInOut");
 
         double x = lerp(a.x, b.x, eased);
         double y = lerp(a.y, b.y, eased);
