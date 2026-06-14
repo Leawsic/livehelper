@@ -10,16 +10,30 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import site.leawsic.livehelper.render.CameraSetup;
 import site.leawsic.livehelper.util.ActiveRenderContext;
 
 @Mixin(GameRenderer.class)
 public class GameRendererMixin {
-    @Shadow @Final private Minecraft minecraft;
+    @Shadow @Final
+    Minecraft minecraft;
 
     @Inject(method = "render", at = @At("HEAD"))
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
         if (ActiveRenderContext.isActive()) {
             minecraft.options.hideGui = true;
+        }
+    }
+
+    @Inject(method = "renderLevel", at = @At(
+        value = "INVOKE",
+        target = "Lnet/minecraft/client/Camera;setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V",
+        shift = At.Shift.AFTER
+    ))
+    private void afterCameraSetup(float tickDelta, long startNano, PoseStack poseStack, CallbackInfo ci) {
+        ActiveRenderContext.Context context = ActiveRenderContext.current();
+        if (context != null) {
+            CameraSetup.applyAfterSetup(minecraft.gameRenderer.getMainCamera(), context.command());
         }
     }
 

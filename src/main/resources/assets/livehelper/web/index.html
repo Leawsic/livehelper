@@ -7,9 +7,12 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <h1>LiveHelper</h1>
-        <nav>
+    <header class="app-header">
+        <div>
+            <p class="eyebrow">Minecraft Multi-Camera Spout Control</p>
+            <h1>LiveHelper</h1>
+        </div>
+        <nav class="tabs">
             <button data-tab="overview" class="active">总览</button>
             <button data-tab="clips">Clips</button>
             <button data-tab="managers">Managers</button>
@@ -18,35 +21,54 @@
 
     <main>
         <section id="overview" class="tab active">
-            <h2>总览</h2>
-            <button id="refresh-overview">刷新</button>
-            <div id="overview-content"></div>
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Overview</p>
+                    <h2>推流总览</h2>
+                </div>
+                <button id="refresh-overview" class="primary">刷新</button>
+            </div>
+            <div id="overview-content" class="grid"></div>
         </section>
 
         <section id="clips" class="tab">
-            <h2>Clips</h2>
-            <button id="new-clip">新建 Clip</button>
-            <div id="clips-list"></div>
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Camera Motion</p>
+                    <h2>Clips</h2>
+                </div>
+                <button id="new-clip" class="primary">新建 Clip</button>
+            </div>
+            <div id="clips-list" class="grid"></div>
         </section>
 
         <section id="managers" class="tab">
-            <h2>Managers</h2>
-            <button id="new-manager">新建 Manager</button>
-            <div id="managers-list"></div>
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Timeline</p>
+                    <h2>Managers</h2>
+                </div>
+                <button id="new-manager" class="primary">新建 Manager</button>
+            </div>
+            <div id="managers-list" class="grid"></div>
         </section>
     </main>
 
     <dialog id="editor-dialog">
         <form method="dialog" id="editor-form">
-            <h3 id="editor-title"></h3>
+            <div class="dialog-head">
+                <h3 id="editor-title"></h3>
+                <button type="button" class="ghost" id="editor-close">关闭</button>
+            </div>
             <div id="editor-fields"></div>
             <menu>
-                <button value="cancel">取消</button>
-                <button id="editor-save" value="default">保存</button>
+                <button type="button" class="ghost" id="editor-cancel">取消</button>
+                <button type="button" id="editor-save" class="primary">保存</button>
             </menu>
         </form>
     </dialog>
 
+    <div id="toast-root"></div>
     <script src="app.js"></script>
 </body>
 </html>

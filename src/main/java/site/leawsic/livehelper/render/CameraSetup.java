@@ -16,6 +16,10 @@ public final class CameraSetup {
         if (mc.level == null || mc.player == null) return;
 
         camera.setup(mc.level, mc.player, false, false, 1.0F);
+        applyAfterSetup(camera, cmd);
+    }
+
+    public static void applyAfterSetup(Camera camera, FrameCommand cmd) {
         CameraAccessor accessor = (CameraAccessor) camera;
         accessor.livehelper$setPosition(cmd.x(), cmd.y(), cmd.z());
 

@@ -2,6 +2,8 @@ package site.leawsic.livehelper.render;
 
 import com.mojang.blaze3d.pipeline.MainTarget;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import site.leawsic.livehelper.LiveHelper;
@@ -26,6 +28,7 @@ public class StreamInstance implements AutoCloseable {
     private final long frameIntervalNs;
 
     private boolean stopped;
+    private FrameCommand lastCommand;
 
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
         this.managerId = managerId;
@@ -45,16 +48,20 @@ public class StreamInstance implements AutoCloseable {
         long nextFrameNs = Math.max(currentNs + frameIntervalNs, System.nanoTime());
         MainScheduler.submitTask(nextFrameNs, (isOutOfMemoryRecovery, taskNs) -> {
             if (stopped) return;
-            renderFrame(isOutOfMemoryRecovery);
+            renderFrame();
             scheduleNext(taskNs);
         });
     }
 
-    private void renderFrame(boolean isOutOfMemoryRecovery) {
+    private void renderFrame() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 
-        FrameCommand cmd = engine.computeFrame();
+        FrameCommand computed = engine.computeFrame();
+        if (computed != null) {
+            lastCommand = computed;
+        }
+        FrameCommand cmd = lastCommand;
         if (cmd == null) return;
 
         MinecraftAccessor minecraftAccessor = (MinecraftAccessor) mc;
@@ -69,10 +76,13 @@ public class StreamInstance implements AutoCloseable {
             mc.options.hideGui = true;
 
             renderTarget.bindWrite(true);
+            RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
             renderTarget.clear(Minecraft.ON_OSX);
             CameraSetup.apply(dummyCamera, cmd, config.width(), config.height(), config.renderDistance());
 
-            ActiveRenderContext.runWithContext(() -> mc.gameRenderer.render(1.0F, System.nanoTime(), true));
+            ActiveRenderContext.runWithContext(cmd, config.width(), config.height(), config.renderDistance(), () ->
+                mc.gameRenderer.renderLevel(1.0F, System.nanoTime(), new PoseStack())
+            );
 
             spoutSender.send(renderTarget.frameBufferId, renderTarget.width, renderTarget.height);
         } catch (Exception e) {
@@ -82,6 +92,7 @@ public class StreamInstance implements AutoCloseable {
             gameRendererAccessor.livehelper$setMainCamera(prevCamera);
             mc.options.hideGui = prevHideGui;
             prevTarget.bindWrite(true);
+            RenderSystem.viewport(0, 0, mc.getWindow().getWidth(), mc.getWindow().getHeight());
         }
     }
 
