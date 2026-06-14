@@ -1,31 +1,32 @@
 {
-	"schemaVersion": 1,
-	"id": "livehelper",
-	"version": "${version}",
-	"name": "LiveHelper",
-	"description": "This is an example description! Tell everyone what your mod is about!",
-	"authors": [
-		"Me!"
-	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
-	"license": "CC0-1.0",
-	"icon": "assets/livehelper/icon.png",
-	"environment": "*",
-	"entrypoints": {
-		"main": [
-			"site.leawsic.livehelper.LiveHelper"
-		]
-	},
-	"mixins": [
-		"livehelper.mixins.json"
-	],
-	"depends": {
-		"fabricloader": ">=0.19.3",
-		"minecraft": "~1.20.1",
-		"java": ">=17",
-		"fabric-api": "*"
-	}
+    "schemaVersion": 1,
+    "id": "livehelper",
+    "version": "${version}",
+    "name": "LiveHelper",
+    "description": "Multi-camera live streaming helper mod for Minecraft",
+    "authors": [
+        "Leawsic"
+    ],
+    "contact": {
+        "homepage": "",
+        "sources": ""
+    },
+    "license": "CC0-1.0",
+    "icon": "assets/livehelper/icon.png",
+    "environment": "client",
+    "entrypoints": {
+        "client": [
+            "site.leawsic.livehelper.LiveHelper"
+        ]
+    },
+    "mixins": [
+        "livehelper.mixins.json"
+    ],
+    "accessWidener": "livehelper.accesswidener",
+    "depends": {
+        "fabricloader": ">=0.15.0",
+        "minecraft": ">=1.20.1",
+        "java": ">=17",
+        "fabric-api": "*"
+    }
 }

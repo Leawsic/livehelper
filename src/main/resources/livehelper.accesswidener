@@ -1,0 +1,5 @@
+accessWidener v2 named
+accessible field net/minecraft/client/Minecraft mainRenderTarget Lcom/mojang/blaze3d/pipeline/RenderTarget;
+accessible field net/minecraft/client/renderer/GameRenderer mainCamera Lnet/minecraft/client/Camera;
+accessible field com/mojang/blaze3d/pipeline/RenderTarget fbo I
+accessible method net/minecraft/client/Minecraft runTick (Z)V

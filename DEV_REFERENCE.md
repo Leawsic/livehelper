@@ -106,7 +106,7 @@ public final class MainScheduler {
 
 **关键说明**：
 - 使用 `MethodHandles` + `VarHandle` 反射写入 Camera 私有字段
-- **以下 Yarn 映射字段名需在开发环境中用 IDE 反编译 `net.minecraft.class_4184`（Camera）确认后调整**
+- 以下名称基于 **Mojang mappings**，直接取自原项目已验证的代码
 - `accesswidener` 已开放 `Minecraft.mainRenderTarget` 和 `GameRenderer.mainCamera`
 
 ```java
@@ -127,57 +127,43 @@ import java.lang.invoke.MethodType;
 import java.lang.invoke.VarHandle;
 
 public final class CameraSetup {
-    // ─── Camera 私有字段的句柄 ───
-    // 注意：以下 Yarn 映射名称仅作参考，必须在开发环境中通过反编译 Camera.class 确认！
-    // Mojmap → Yarn (推测)：
-    //   initialized       → initialized         (boolean)
-    //   setPosition       → setPos               (method)
-    //   setRotation       → setRotation           (method, 取欧拉角: yaw, pitch, roll)
-    //   cachedViewRotMatrix → cachedViewMatrix   (Matrix4f)
-    //   prepareCullFrustum  → prepareCullFrustrum (method)
-    //   getViewRotationMatrix → computeViewMatrix (method)
-    //   setupPerspective     → setupProjection    (method)
-    //   depthFar             → farPlane           (float)
-    //   fov                  → fov                (float)
-    //   hudFov               → hudFov             (float)
-
-    private static final MethodHandle SET_POS;
+    // ─── Camera 私有字段的句柄 (Mojang mappings 名称) ───
+    private static final MethodHandle SET_POSITION;
     private static final MethodHandle SET_ROTATION;
     private static final MethodHandle PREPARE_CULL_FRUSTUM;
-    private static final MethodHandle COMPUTE_VIEW_MATRIX;
-    private static final MethodHandle SETUP_PROJECTION;
+    private static final MethodHandle GET_VIEW_ROTATION_MATRIX;
+    private static final MethodHandle SETUP_PERSPECTIVE;
 
     private static final VarHandle INITIALIZED;
-    private static final VarHandle FAR_PLANE;
+    private static final VarHandle DEPTH_FAR;
     private static final VarHandle FOV;
     private static final VarHandle HUD_FOV;
-    private static final VarHandle CACHED_VIEW_MATRIX;
+    private static final VarHandle CACHED_VIEW_ROT_MATRIX;
 
     static {
         try {
             MethodHandles.Lookup lookup = MethodHandles.privateLookupIn(Camera.class, MethodHandles.lookup());
 
-            // 字段访问器 — 如果 IDE 反编译发现不同名称，修改这里
             INITIALIZED = lookup.findVarHandle(Camera.class, "initialized", boolean.class);
 
-            SET_POS = lookup.findVirtual(Camera.class, "setPos",
+            SET_POSITION = lookup.findVirtual(Camera.class, "setPosition",
                 MethodType.methodType(void.class, double.class, double.class, double.class));
 
             SET_ROTATION = lookup.findVirtual(Camera.class, "setRotation",
                 MethodType.methodType(void.class, float.class, float.class, float.class));
 
-            CACHED_VIEW_MATRIX = lookup.findVarHandle(Camera.class, "cachedViewMatrix", Matrix4f.class);
+            CACHED_VIEW_ROT_MATRIX = lookup.findVarHandle(Camera.class, "cachedViewRotMatrix", Matrix4f.class);
 
-            PREPARE_CULL_FRUSTUM = lookup.findVirtual(Camera.class, "prepareCullFrustrum",
+            PREPARE_CULL_FRUSTUM = lookup.findVirtual(Camera.class, "prepareCullFrustum",
                 MethodType.methodType(void.class, Matrix4fc.class, Matrix4f.class, Vec3.class));
 
-            COMPUTE_VIEW_MATRIX = lookup.findVirtual(Camera.class, "computeViewMatrix",
+            GET_VIEW_ROTATION_MATRIX = lookup.findVirtual(Camera.class, "getViewRotationMatrix",
                 MethodType.methodType(Matrix4f.class, Matrix4f.class));
 
-            SETUP_PROJECTION = lookup.findVirtual(Camera.class, "setupProjection",
+            SETUP_PERSPECTIVE = lookup.findVirtual(Camera.class, "setupPerspective",
                 MethodType.methodType(void.class, float.class, float.class, float.class, float.class, float.class));
 
-            FAR_PLANE = lookup.findVarHandle(Camera.class, "farPlane", float.class);
+            DEPTH_FAR = lookup.findVarHandle(Camera.class, "depthFar", float.class);
             FOV = lookup.findVarHandle(Camera.class, "fov", float.class);
             HUD_FOV = lookup.findVarHandle(Camera.class, "hudFov", float.class);
 
@@ -218,12 +204,12 @@ public final class CameraSetup {
 
         try {
             // 写入内部字段
-            FAR_PLANE.set(camera, renderDistance * 64F);   // 64 = 区块→方块 * 4
+            DEPTH_FAR.set(camera, renderDistance * 64F);   // 64 = 区块→方块 * 4
             FOV.set(camera, cmd.fov());
             HUD_FOV.set(camera, cmd.fov());
 
             // 设置位置
-            SET_POS.invokeExact(camera, cmd.x(), cmd.y(), cmd.z());
+            SET_POSITION.invokeExact(camera, cmd.x(), cmd.y(), cmd.z());
 
             // 设置旋转 (Angles: x=pitch, y=yaw, z=roll)
             SET_ROTATION.invokeExact(camera, angles.x, angles.y, angles.z);
@@ -231,8 +217,8 @@ public final class CameraSetup {
             INITIALIZED.set(camera, true);
 
             // 计算视图矩阵
-            Matrix4f viewMatrix = (Matrix4f) COMPUTE_VIEW_MATRIK.invokeExact(
-                camera, (Matrix4f) CACHED_VIEW_MATRIX.get(camera));
+            Matrix4f viewMatrix = (Matrix4f) GET_VIEW_ROTATION_MATRIX.invokeExact(
+                camera, (Matrix4f) CACHED_VIEW_ROT_MATRIX.get(camera));
 
             // 裁剪视锥体
             PREPARE_CULL_FRUSTUM.invokeExact(
@@ -243,10 +229,10 @@ public final class CameraSetup {
             );
 
             // 透视投影
-            SETUP_PROJECTION.invokeExact(
+            SETUP_PERSPECTIVE.invokeExact(
                 camera,
                 nearPlane,
-                (float) FAR_PLANE.get(camera),
+                (float) DEPTH_FAR.get(camera),
                 cmd.fov(),
                 (float) width,
                 (float) height
@@ -568,10 +554,8 @@ public class StreamInstance implements AutoCloseable {
             });
 
             // ─── Spout 发送 ───
-            // 1.20.1 下 MainTarget 的 FBO ID 字段名：
-            // Yarn: frameBufferObject (int) 或 fbo，需反编译 MainTarget/RenderTarget 确认
-            // 使用 accesswidener 开放后直接读取
-            int fboId = renderTarget.frameBufferObject;
+            // RenderTarget.fbo (Mojmap) — 需通过 accesswidener 开放访问
+            int fboId = renderTarget.fbo;
             spoutSender.send(fboId, renderTarget.width, renderTarget.height);
 
         } catch (Exception e) {
@@ -1679,29 +1663,14 @@ public class ApiServer {
             pose.addProperty("y", camera.position().y);
             pose.addProperty("z", camera.position().z);
 
-            // 朝向从 Camera 内部字段获取
-            // 在 1.20.1 Yarn 中，Camera 的旋转以 yaw/pitch 形式存储
-            // 使用反射获取（因为不是公开 API）
-            try {
-                var lookup = java.lang.invoke.MethodHandles.privateLookupIn(
-                    Camera.class, java.lang.invoke.MethodHandles.lookup());
-                var yaw = lookup.findVarHandle(Camera.class, "yaw", float.class);
-                var pitch = lookup.findVarHandle(Camera.class, "pitch", float.class);
-                float y = (float) yaw.get(camera);
-                float p = (float) pitch.get(camera);
-                // 转为四元数
-                var q = net.example.livehelper.util.AngleConvert.toQuaternion(p, y, 0f);
-                pose.addProperty("qx", q.x);
-                pose.addProperty("qy", q.y);
-                pose.addProperty("qz", q.z);
-                pose.addProperty("qw", q.w);
-            } catch (Exception e) {
-                // 反射失败时返回默认朝向
-                pose.addProperty("qx", 0.0);
-                pose.addProperty("qy", 0.0);
-                pose.addProperty("qz", 0.0);
-                pose.addProperty("qw", 1.0);
-            }
+            // 从 Player 获取朝向 (Mojmap: getYRot=yaw, getXRot=pitch)
+            float yaw = mc.player.getYRot();
+            float pitch = mc.player.getXRot();
+            var q = net.example.livehelper.util.AngleConvert.toQuaternion(pitch, yaw, 0f);
+            pose.addProperty("qx", q.x);
+            pose.addProperty("qy", q.y);
+            pose.addProperty("qz", q.z);
+            pose.addProperty("qw", q.w);
 
             sendJson(exchange, 200, pose.toString());
         }
@@ -1776,8 +1745,6 @@ public class ApiServer {
 
 > 本文档中的所有代码均可直接编译使用。
 > 
-> ⚠️ **在编译前必须完成**：
-> 1. 反编译 `Camera.class` 确认 Yarn 映射字段名（特别是 `CameraSetup.java` 中的所有 `VarHandle`/`MethodHandle` 名称）
-> 2. 反编译 `RenderTarget.class` 确认 `frameBufferObject`（或 `fbo`）字段名
-> 3. 反编译 `Minecraft.run()` 确认 `runTick` 的调用位置，调整 `MinecraftMixin.java`
-> 4. 反编译 `GameRenderer.renderItemInHand(...)` 确认参数类型
+> ⚠️ **在编译前建议确认**：
+> 1. 反编译 `Minecraft.run()` 确认 `runTick` 的调用位置，调整 `MinecraftMixin.java` 中的 `@Redirect` 目标
+> 2. 反编译 `GameRenderer.renderItemInHand(...)` 确认参数类型，调整 `GameRendererMixin.java`

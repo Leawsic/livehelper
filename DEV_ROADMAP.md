@@ -1,6 +1,6 @@
 # LiveHelper 开发路线文档
 
-> 目标：从零构建一个 Fabric 1.20.1 (Yarn mappings) 的 Minecraft 多机位直播辅助 Mod
+> 目标：从零构建一个 Fabric 1.20.1 (Mojang mappings) 的 Minecraft 多机位直播辅助 Mod
 > 核心功能：多视角渲染 → Spout2 推流到 OBS + Web 可视化管理界面
 
 ---
@@ -71,7 +71,7 @@
 | **Minecraft** | 1.20.1 | 游戏版本 |
 | **Fabric Loader** | ≥0.15.0 | Mod 加载器 |
 | **Fabric API** | 0.92.0+1.20.1 | Fabric 事件/API |
-| **Yarn Mappings** | 1.20.1+build.10:v2 | 反混淆映射 |
+| **Mojang Mappings** | (Loom 内置) | 官方反混淆映射 |
 | **Java** | 17 | 语言版本 |
 | **Gradle** | 8.x | 构建工具 |
 | **Fabric Loom** | 1.6+ | Gradle 插件 |
@@ -207,7 +207,7 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 dependencies {
     minecraft "com.mojang:minecraft:1.20.1"
-    mappings "net.fabricmc:yarn:1.20.1+build.10:v2"
+    mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:0.15.11"
     modImplementation "net.fabricmc.fabric-api:fabric-api:0.92.0+1.20.1"
 
@@ -271,6 +271,7 @@ org.gradle.jvmargs=-Xmx2G
 ```
 accessible class net/minecraft/client/Minecraft field mainRenderTarget Lcom/mojang/blaze3d/pipeline/RenderTarget;
 accessible class net/minecraft/client/renderer/GameRenderer field mainCamera Lnet/minecraft/client/Camera;
+accessible class com/mojang/blaze3d/pipeline/RenderTarget field fbo I
 ```
 
 #### 4.2.7 `LiveHelperMod.java`（空壳验证）
@@ -696,92 +697,22 @@ public class StreamInstance {
 
 ### 8.4 CameraSetup（反射控制摄像机）
 
-**关键问题**：在 1.20.1 (Yarn mappings) 下，`Camera` 类的私有字段和方法名需要对照 Yarn 映射。
+**关键说明**：使用 `MethodHandles` + `VarHandle` 反射写入 Camera 私有字段。使用 **Mojang mappings**，字段名如下：
 
-**已知的 Yarn 映射名称**（需要在开发环境中通过反编译确认）：
+| 名称 | 类型 | 用途 |
+|---|---|---|
+| `Camera.initialized` | `boolean` | 标记是否已初始化 |
+| `Camera.setPosition(double,double,double)` | method | 设置位置 |
+| `Camera.setRotation(float,float,float)` | method | 设置旋转 (yaw, pitch, roll) |
+| `Camera.cachedViewRotMatrix` | `Matrix4f` | 视图矩阵缓存 |
+| `Camera.prepareCullFrustum(Matrix4fc,Matrix4f,Vec3)` | method | 裁剪视锥体 |
+| `Camera.getViewRotationMatrix(Matrix4f) → Matrix4f` | method | 获取视图旋转矩阵 |
+| `Camera.setupPerspective(float,float,float,float,float)` | method | 透视投影 |
+| `Camera.depthFar` | `float` | 远平面 |
+| `Camera.fov` | `float` | 视场角 |
+| `Camera.hudFov` | `float` | HUD 视场角 |
 
-| 原 Mojmap 名称 | 推测 Yarn 名称 | 类型 | 用途 |
-|---|---|---|---|
-| `initialized` | `initialized` | `boolean` | 标记是否已初始化 |
-| `setPosition` | `setPos` | `method(double,double,double)` | 设置位置 |
-| `setRotation` | `setRotation` | `method(float,float,float)` | 设置旋转 |
-| `cachedViewRotMatrix` | `cachedViewMatrix` 或 `viewMatrix` | `Matrix4f` | 视图矩阵缓存 |
-| `prepareCullFrustum` | `prepareCullFrustrum` | `method(Matrix4fc,Matrix4f,Vec3)` | 裁剪视锥体 |
-| `getViewRotationMatrix` | `getViewMatrix` 或 `computeViewRotation` | `method(Matrix4f) → Matrix4f` | 获取视图旋转矩阵 |
-| `setupPerspective` | `setupProjection` | `method(float,float,float,float,float)` | 透视投影 |
-| `depthFar` | `farPlane` 或 `maxDistance` | `float` | 远平面 |
-| `fov` | `fov` | `float` | 视场角 |
-| `hudFov` | `hudFov` | `float` | HUD 视场角 |
-
-> 实现时必须先在 Yarn 反编译环境下查看 `Camera` 类的实际字段名，然后调整上述名称。以下为参考实现骨架：
-
-```java
-// CameraSetup.java
-public class CameraSetup {
-    private static final MethodHandle SET_POS, SET_ROTATION;
-    private static final VarHandle INITIALIZED, FAR_PLANE, FOV, HUD_FOV, VIEW_MATRIX;
-    private static final MethodHandle PREPARE_FRUSTUM, GET_VIEW_MATRIX, SETUP_PROJECTION;
-
-    static {
-        try {
-            var lookup = MethodHandles.privateLookupIn(Camera.class, MethodHandles.lookup());
-            // 以下名称需根据实际 Yarn 映射调整
-            INITIALIZED = lookup.findVarHandle(Camera.class, "initialized", boolean.class);
-            SET_POS = lookup.findVirtual(Camera.class, "setPos",
-                       MethodType.methodType(void.class, double.class, double.class, double.class));
-            SET_ROTATION = lookup.findVirtual(Camera.class, "setRotation",
-                       MethodType.methodType(void.class, float.class, float.class, float.class));
-            VIEW_MATRIX = lookup.findVarHandle(Camera.class, "cachedViewMatrix", Matrix4f.class);
-            PREPARE_FRUSTUM = lookup.findVirtual(Camera.class, "prepareCullFrustrum",
-                       MethodType.methodType(void.class, Matrix4fc.class, Matrix4f.class, Vec3.class));
-            GET_VIEW_MATRIX = lookup.findVirtual(Camera.class, "getViewMatrix",
-                       MethodType.methodType(Matrix4f.class, Matrix4f.class));
-            SETUP_PROJECTION = lookup.findVirtual(Camera.class, "setupProjection",
-                       MethodType.methodType(void.class, float.class, float.class, float.class, float.class, float.class));
-            FAR_PLANE = lookup.findVarHandle(Camera.class, "farPlane", float.class);
-            FOV = lookup.findVarHandle(Camera.class, "fov", float.class);
-            HUD_FOV = lookup.findVarHandle(Camera.class, "hudFov", float.class);
-        } catch (ReflectiveOperationException e) {
-            throw new RuntimeException("Failed to initialize Camera accessors", e);
-        }
-    }
-
-    public static void apply(Camera camera, FrameCommand cmd, int width, int height, int renderDistance) {
-        // 1. 设置 level 和 entity
-        camera.setLevel(minecraft.level);
-        camera.setEntity(minecraft.player);
-
-        // 2. 计算投影矩阵
-        Matrix4f projection = new Matrix4f()
-            .perspective((float)Math.toRadians(cmd.fov()),
-                         (float)width / height, 0.05F, renderDistance * 16F);
-
-        // 3. 反射设置 Camera 内部状态
-        Vector3f angles = toEuler(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
-        FAR_PLANE.set(camera, renderDistance * 64F);
-        FOV.set(camera, cmd.fov());
-        HUD_FOV.set(camera, cmd.fov());
-        SET_POS.invokeExact(camera, cmd.x(), cmd.y(), cmd.z());
-        SET_ROTATION.invokeExact(camera, angles.y, angles.z, angles.x);
-        INITIALIZED.set(camera, true);
-
-        // 4. 准备裁剪和投影
-        Matrix4f viewMatrix = (Matrix4f) GET_VIEW_MATRIX.invokeExact(camera, (Matrix4f) VIEW_MATRIX.get(camera));
-        PREPARE_FRUSTUM.invokeExact(camera, (Matrix4fc) viewMatrix, projection, camera.position());
-        SETUP_PROJECTION.invokeExact(camera, 0.05F, (float) FAR_PLANE.get(camera), cmd.fov(), (float) width, (float) height);
-    }
-
-    private static Vector3f toEuler(Quaternionf q) {
-        // 将四元数转欧拉角，匹配 Minecraft Camera 的 YXZ 旋转顺序
-        Vector3f euler = new Vector3f();
-        q.getEulerAnglesYXZ(euler);
-        euler.set((float) Math.toDegrees(-euler.x),
-                  (float) Math.toDegrees(Math.PI - euler.y),
-                  (float) Math.toDegrees(-euler.z));
-        return euler;
-    }
-}
-```
+完整实现代码见 **`DEV_REFERENCE.md#2-camerasetup摄像机反射控制`**。
 
 ### 8.5 MainScheduler（自定义帧调度）
 
@@ -860,7 +791,7 @@ int fboId = renderTarget.getColorTextureId();  // 或 renderTarget.frameBufferOb
 spoutSender.send(fboId, renderTarget.width, renderTarget.height);
 ```
 
-在 1.20.1 中，`MainTarget`（继承 `RenderTarget`）有 `fbo` 字段（Yarn: `frameBufferObject` 或 `fbo`），表示 OpenGL FBO ID。Access widener 开放后可直接读取。
+在 1.20.1 Mojmap 中，`RenderTarget` 的 FBO ID 字段为 `fbo`（int）。Access widener 开放 `RenderTarget.fbo` 后可直接读取。
 
 ### 8.8 验收标准
 
@@ -1068,8 +999,14 @@ public class PoseHandler implements HttpHandler {
         pose.addProperty("x", camera.position().x);
         pose.addProperty("y", camera.position().y);
         pose.addProperty("z", camera.position().z);
-        // 朝向需要从 Camera 内部字段获取（需 Access Widener 开放）
-        pose.addProperty("qx", ...);  // Yarn 字段名需确认
+        // 使用 Player.getYRot() / getXRot() 获取朝向，转为四元数
+        float yaw = client.player.getYRot();
+        float pitch = client.player.getXRot();
+        var q = net.example.livehelper.util.AngleConvert.toQuaternion(pitch, yaw, 0f);
+        pose.addProperty("qx", q.x);
+        pose.addProperty("qy", q.y);
+        pose.addProperty("qz", q.z);
+        pose.addProperty("qw", q.w);
         ...
         sendJson(exchange, 200, pose.toString());
     }
@@ -1307,7 +1244,7 @@ function moveClipSlot(manager, fromIndex, toIndex) {
 | C1 | 无 Java 17 不兼容的 API 调用 | 无 `ScopedValue`、`Math.clamp`、`Thread.ofPlatform`、`Future.state()` |
 | C2 | 所有渲染操作在 Minecraft 主线程执行 | 无跨线程 GL 操作 |
 | C3 | Mixin 使用标准注解，无 MixinExtras 依赖 | — |
-| C4 | 所有记录的 Yarn 字段名已验证正确 | 通过 IDE 反编译确认 |
+| C4 | Camera 反射字段名需与 Mojang mappings 一致 | 通过 IDE 反编译确认 |
 | C5 | Web UI 使用 Vanilla JS，无 npm/构建步骤 | — |
 
 ---
@@ -1409,7 +1346,7 @@ gradlew runClient     # 启动并手工验证核心流程：启动 Manager → O
 
 ### 14.2 1.20.1 GameRenderer.render() 签名
 
-在 1.20.1 (Yarn) 中，`GameRenderer.render()` 的签名是：
+在 1.20.1 (Mojmap) 中，`GameRenderer.render()` 的签名是：
 ```java
 public void render(float tickDelta, long startNano, MatrixStack matrices)
 ```
@@ -1419,9 +1356,13 @@ public void render(float tickDelta, long startNano, MatrixStack matrices)
 
 需要在 `StreamInstance.renderInternal()` 中模拟调用。
 
-### 14.3 Yarn 映射中 Camera 相关的访问
+### 14.3 Mojmap 下 Camera 和 RenderTarget 的字段名
 
-通过 `accesswidener` 开放的 `mainRenderTarget` 和 `mainCamera` 字段在 1.20.1 Yarn 中保留原名（与 Mojmap 一致）。但 **Camera 内部字段名不同**，需在开发环境中用 IDE 反编译 `net.minecraft.class_4184`（Camera 类）确认。
+所有反射访问的字段名均使用 **Mojang mappings** 的原始名称：
+- `Camera.initialized`, `Camera.cachedViewRotMatrix`, `Camera.depthFar`, `Camera.fov`, `Camera.hudFov`（字段）
+- `Camera.setPosition()`, `Camera.setRotation()`, `Camera.prepareCullFrustum()`, `Camera.getViewRotationMatrix()`, `Camera.setupPerspective()`（方法）
+- `RenderTarget.fbo`（FBO ID 字段，需 accesswidener）
+- `Minecraft.mainRenderTarget`, `GameRenderer.mainCamera`（已通过 accesswidener 开放）
 
 ### 14.4 原项目参考位置
 

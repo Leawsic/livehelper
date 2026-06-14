@@ -1,0 +1,76 @@
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    color: #e7e7e7;
+    background: #111827;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    background: #0f172a;
+    border-bottom: 1px solid #334155;
+}
+
+h1, h2, h3 {
+    margin: 0 0 12px;
+}
+
+nav button, button {
+    margin: 4px;
+    padding: 8px 12px;
+    color: #e7e7e7;
+    background: #1f2937;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+button:hover, button.active {
+    background: #2563eb;
+}
+
+main {
+    padding: 24px;
+}
+
+.tab {
+    display: none;
+}
+
+.tab.active {
+    display: block;
+}
+
+.card {
+    margin: 12px 0;
+    padding: 16px;
+    background: #1f2937;
+    border: 1px solid #334155;
+    border-radius: 12px;
+}
+
+label {
+    display: block;
+    margin: 10px 0;
+}
+
+input, select, textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    color: #e7e7e7;
+    background: #0f172a;
+    border: 1px solid #475569;
+    border-radius: 6px;
+}
+
+dialog {
+    width: min(720px, 90vw);
+    color: #e7e7e7;
+    background: #111827;
+    border: 1px solid #475569;
+    border-radius: 12px;
+}
