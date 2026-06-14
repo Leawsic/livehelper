@@ -15,8 +15,7 @@ import site.leawsic.livehelper.util.ActiveRenderContext;
 
 @Mixin(GameRenderer.class)
 public class GameRendererMixin {
-    @Shadow @Final
-    Minecraft minecraft;
+    @Shadow @Final private Minecraft minecraft;
 
     @Inject(method = "render", at = @At("HEAD"))
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
@@ -31,9 +30,9 @@ public class GameRendererMixin {
         shift = At.Shift.AFTER
     ))
     private void afterCameraSetup(float tickDelta, long startNano, PoseStack poseStack, CallbackInfo ci) {
-        ActiveRenderContext.Context context = ActiveRenderContext.current();
-        if (context != null) {
-            CameraSetup.applyAfterSetup(minecraft.gameRenderer.getMainCamera(), context.command());
+        ActiveRenderContext.Context ctx = ActiveRenderContext.current();
+        if (ctx != null) {
+            CameraSetup.applyAfterSetup(((GameRenderer)(Object) this).getMainCamera(), ctx.command());
         }
     }
 

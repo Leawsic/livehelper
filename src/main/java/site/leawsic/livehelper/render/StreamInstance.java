@@ -3,21 +3,18 @@ package site.leawsic.livehelper.render;
 import com.mojang.blaze3d.pipeline.MainTarget;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.GameRenderer;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.LightTexture;
-import org.joml.Matrix4f;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
 import site.leawsic.livehelper.mixin.GameRendererAccessor;
+import site.leawsic.livehelper.mixin.LightTextureAccessor;
 import site.leawsic.livehelper.mixin.MinecraftAccessor;
 import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.scheduler.MainScheduler;
 import site.leawsic.livehelper.spout.SpoutSender;
+import site.leawsic.livehelper.util.ActiveRenderContext;
 
 import java.util.concurrent.TimeUnit;
 
@@ -31,7 +28,6 @@ public class StreamInstance implements AutoCloseable {
     private final long frameIntervalNs;
 
     private boolean stopped;
-    private FrameCommand lastCommand;
 
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
         this.managerId = managerId;
@@ -60,9 +56,7 @@ public class StreamInstance implements AutoCloseable {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 
-        FrameCommand computed = engine.computeFrame();
-        if (computed != null) lastCommand = computed;
-        FrameCommand cmd = lastCommand;
+        FrameCommand cmd = engine.computeFrame();
         if (cmd == null) return;
 
         MinecraftAccessor minecraftAccessor = (MinecraftAccessor) mc;
@@ -80,38 +74,29 @@ public class StreamInstance implements AutoCloseable {
             RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
             renderTarget.clear(Minecraft.ON_OSX);
 
-            // ── Set up virtual camera ──
             CameraSetup.apply(dummyCamera, cmd, config.width(), config.height(), config.renderDistance());
 
-            // ── Build projection matrix for the offscreen target, NOT the window ──
-            // GameRenderer.getProjectionMatrix() uses window aspect ratio — that will
-            // give wrong frustum culling if the output resolution differs from the window.
-            // We construct our own projection matching the Manager's output dimensions.
-            float aspect = (float) config.width() / (float) config.height();
-            float fovRad = (float) Math.toRadians(cmd.fov());
-            float farPlane = config.renderDistance() * 16f;
-            Matrix4f projection = new Matrix4f().perspective(fovRad, aspect, 0.05f, farPlane);
-
-            // ── Build model-view matrix ──
-            // This mirrors what GameRenderer.renderLevel builds before calling LevelRenderer.renderLevel.
-            PoseStack poseStack = new PoseStack();
-            poseStack.mulPoseMatrix(projection);
-
-            // ── Render world directly through LevelRenderer ──
-            // We bypass GameRenderer.renderLevel() so the projection matrix comes
-            // from our virtual camera, not from the window.
-            // The frustum culling inside LevelRenderer will use this projection,
-            // so terrain at our virtual camera's position will NOT be culled.
-            LevelRenderer levelRenderer = mc.levelRenderer;
-            GameRenderer gameRenderer = mc.gameRenderer;
-            LightTexture lightTexture = gameRenderer.lightTexture();
-            lightTexture.updateLightTexture(1.0F);
-            levelRenderer.renderLevel(
-                poseStack, 1.0F, System.nanoTime(), false,
-                dummyCamera, gameRenderer, lightTexture, projection
+            // ── Render the full game frame into our offscreen target ──
+            // GameRenderer.render() will:
+            //   1. Set viewport to window size (we set it back in finally)
+            //   2. Call renderLevel() internally with proper GL state
+            //   3. Draw hand (suppressed by mixin)
+            //   4. Draw GUI (suppressed by hideGui mixin)
+            //
+            // CRITICAL: renderLevel() calls lightTexture.updateLightTexture() which reads
+            // the mainRenderTarget's color texture to set up the light map.
+            // Since we swapped mainRenderTarget to our NEW black-cleared offscreen target,
+            // the light map will be corrupted (black). We MUST reset the update flag
+            // afterwards so the next game frame re-reads from the correct (real) target.
+            ActiveRenderContext.runWithContext(cmd, config.width(), config.height(), config.renderDistance(),
+                () -> mc.gameRenderer.render(1.0F, System.nanoTime(), true)
             );
 
-            // ── Spout send ──
+            // Reset the light texture update flag — our render consumed it with a black target,
+            // so the game needs to re-update on its next frame using the real main target.
+            ((LightTextureAccessor) mc.gameRenderer.lightTexture())
+                .livehelper$setUpdateLightTexture(true);
+
             spoutSender.send(renderTarget.frameBufferId, renderTarget.width, renderTarget.height);
         } catch (Exception e) {
             LiveHelper.LOGGER.error("Error rendering stream {}", managerId, e);
@@ -125,7 +110,6 @@ public class StreamInstance implements AutoCloseable {
     }
 
     public void tick() {
-        if (stopped) return;
         dummyCamera.tick();
     }
 
