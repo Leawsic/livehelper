@@ -6,6 +6,9 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
 import org.joml.Matrix4f;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
@@ -15,7 +18,6 @@ import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.scheduler.MainScheduler;
 import site.leawsic.livehelper.spout.SpoutSender;
-import site.leawsic.livehelper.util.ActiveRenderContext;
 
 import java.util.concurrent.TimeUnit;
 
@@ -78,20 +80,38 @@ public class StreamInstance implements AutoCloseable {
             RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
             renderTarget.clear(Minecraft.ON_OSX);
 
+            // ── Set up virtual camera ──
             CameraSetup.apply(dummyCamera, cmd, config.width(), config.height(), config.renderDistance());
 
-            // ── Prepare cull frustum for virtual camera ──
+            // ── Build projection matrix for the offscreen target, NOT the window ──
+            // GameRenderer.getProjectionMatrix() uses window aspect ratio — that will
+            // give wrong frustum culling if the output resolution differs from the window.
+            // We construct our own projection matching the Manager's output dimensions.
             float aspect = (float) config.width() / (float) config.height();
             float fovRad = (float) Math.toRadians(cmd.fov());
             float farPlane = config.renderDistance() * 16f;
             Matrix4f projection = new Matrix4f().perspective(fovRad, aspect, 0.05f, farPlane);
-            mc.levelRenderer.prepareCullFrustum(new PoseStack(), dummyCamera.getPosition(), projection);
 
-            // ── Render only the world (no GUI, no hand) ──
-            ActiveRenderContext.runWithContext(cmd, config.width(), config.height(), config.renderDistance(), () ->
-                mc.gameRenderer.renderLevel(1.0F, System.nanoTime(), new PoseStack())
+            // ── Build model-view matrix ──
+            // This mirrors what GameRenderer.renderLevel builds before calling LevelRenderer.renderLevel.
+            PoseStack poseStack = new PoseStack();
+            poseStack.mulPoseMatrix(projection);
+
+            // ── Render world directly through LevelRenderer ──
+            // We bypass GameRenderer.renderLevel() so the projection matrix comes
+            // from our virtual camera, not from the window.
+            // The frustum culling inside LevelRenderer will use this projection,
+            // so terrain at our virtual camera's position will NOT be culled.
+            LevelRenderer levelRenderer = mc.levelRenderer;
+            GameRenderer gameRenderer = mc.gameRenderer;
+            LightTexture lightTexture = gameRenderer.lightTexture();
+            lightTexture.updateLightTexture(1.0F);
+            levelRenderer.renderLevel(
+                poseStack, 1.0F, System.nanoTime(), false,
+                dummyCamera, gameRenderer, lightTexture, projection
             );
 
+            // ── Spout send ──
             spoutSender.send(renderTarget.frameBufferId, renderTarget.width, renderTarget.height);
         } catch (Exception e) {
             LiveHelper.LOGGER.error("Error rendering stream {}", managerId, e);
