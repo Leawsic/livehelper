@@ -13,7 +13,7 @@ public class PathTemplate implements MotionTemplate {
     public record Keyframe(float t, double x, double y, double z, float rx, float ry, float rz) {}
 
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
         throw new UnsupportedOperationException("PATH template requires pre-parsed keyframes");
     }
 

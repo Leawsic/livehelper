@@ -10,7 +10,7 @@ import static site.leawsic.livehelper.engine.templates.MotionTemplates.*;
 
 public class PanTiltTemplate implements MotionTemplate {
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
         float pan = lerp(pf(params, "startPan", 0f), pf(params, "endPan", 0f), progress);
         float tilt = lerp(pf(params, "startTilt", 0f), pf(params, "endTilt", 0f), progress);
         Quaternionf q = AngleConvert.toQuaternion(tilt, pan, 0f);

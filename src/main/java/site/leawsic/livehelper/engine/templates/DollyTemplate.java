@@ -10,8 +10,8 @@ import static site.leawsic.livehelper.engine.templates.MotionTemplates.*;
 
 public class DollyTemplate implements MotionTemplate {
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
-        float eased = ease(progress, "linear");
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
+        float eased = ease(progress, ps(params, "easing", "linear"));
 
         double x = lerp(p(params, "fromX", 0.0), p(params, "toX", 0.0), eased);
         double y = lerp(p(params, "fromY", 0.0), p(params, "toY", 0.0), eased);

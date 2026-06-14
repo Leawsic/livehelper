@@ -5,5 +5,5 @@ import site.leawsic.livehelper.model.FrameCommand;
 import java.util.Map;
 
 public interface MotionTemplate {
-    FrameCommand evaluate(Map<String, Double> params, float progress);
+    FrameCommand evaluate(Map<String, Object> params, float progress);
 }

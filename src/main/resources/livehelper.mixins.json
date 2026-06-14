@@ -4,6 +4,9 @@
     "package": "site.leawsic.livehelper.mixin",
     "compatibilityLevel": "JAVA_17",
     "client": [
+        "CameraAccessor",
+        "GameRendererAccessor",
+        "MinecraftAccessor",
         "MinecraftMixin",
         "GameRendererMixin"
     ],

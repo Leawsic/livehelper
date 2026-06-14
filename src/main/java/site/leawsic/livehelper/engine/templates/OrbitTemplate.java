@@ -11,7 +11,7 @@ import static site.leawsic.livehelper.engine.templates.MotionTemplates.pf;
 
 public class OrbitTemplate implements MotionTemplate {
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
         double targetX = p(params, "targetX", 0.0);
         double targetY = p(params, "targetY", 0.0);
         double targetZ = p(params, "targetZ", 0.0);

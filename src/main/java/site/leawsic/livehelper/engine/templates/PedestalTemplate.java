@@ -10,8 +10,8 @@ import static site.leawsic.livehelper.engine.templates.MotionTemplates.*;
 
 public class PedestalTemplate implements MotionTemplate {
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
-        float eased = ease(progress, "linear");
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
+        float eased = ease(progress, ps(params, "easing", "linear"));
         double y = lerp(p(params, "fromHeight", 0.0), p(params, "toHeight", 0.0), eased);
         Quaternionf q = AngleConvert.toQuaternion(pf(params, "rotX", 0f), pf(params, "rotY", 0f), 0f);
         return new FrameCommand(

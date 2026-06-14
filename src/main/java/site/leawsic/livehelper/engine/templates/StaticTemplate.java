@@ -11,7 +11,7 @@ import static site.leawsic.livehelper.engine.templates.MotionTemplates.pf;
 
 public class StaticTemplate implements MotionTemplate {
     @Override
-    public FrameCommand evaluate(Map<String, Double> params, float progress) {
+    public FrameCommand evaluate(Map<String, Object> params, float progress) {
         Quaternionf q = AngleConvert.toQuaternion(
             pf(params, "rotX", 0f),
             pf(params, "rotY", 0f),

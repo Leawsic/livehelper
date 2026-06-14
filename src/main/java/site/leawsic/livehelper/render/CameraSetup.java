@@ -1,12 +1,25 @@
 package site.leawsic.livehelper.render;
 
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import site.leawsic.livehelper.mixin.CameraAccessor;
 import site.leawsic.livehelper.model.FrameCommand;
+import site.leawsic.livehelper.util.AngleConvert;
 
 public final class CameraSetup {
     private CameraSetup() {}
 
     public static void apply(Camera camera, FrameCommand cmd, int width, int height, int renderDistance) {
-        throw new UnsupportedOperationException("Camera reflection setup must be verified against 1.20.1 Mojang mappings before runtime use");
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return;
+
+        camera.setup(mc.level, mc.player, false, false, 1.0F);
+        CameraAccessor accessor = (CameraAccessor) camera;
+        accessor.livehelper$setPosition(cmd.x(), cmd.y(), cmd.z());
+
+        Vector3f angles = AngleConvert.toEulerAngles(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
+        accessor.livehelper$setRotation(angles.y, angles.x);
     }
 }

@@ -51,11 +51,27 @@ public final class MotionTemplates {
         };
     }
 
-    public static double p(Map<String, Double> params, String key, double def) {
-        return params == null ? def : params.getOrDefault(key, def);
+    public static double p(Map<String, Object> params, String key, double def) {
+        if (params == null) return def;
+        Object value = params.get(key);
+        if (value instanceof Number number) return number.doubleValue();
+        if (value instanceof String string) {
+            try {
+                return Double.parseDouble(string);
+            } catch (NumberFormatException ignored) {
+                return def;
+            }
+        }
+        return def;
     }
 
-    public static float pf(Map<String, Double> params, String key, float def) {
-        return params == null ? def : params.getOrDefault(key, (double) def).floatValue();
+    public static float pf(Map<String, Object> params, String key, float def) {
+        return (float) p(params, key, def);
+    }
+
+    public static String ps(Map<String, Object> params, String key, String def) {
+        if (params == null) return def;
+        Object value = params.get(key);
+        return value == null ? def : String.valueOf(value);
     }
 }

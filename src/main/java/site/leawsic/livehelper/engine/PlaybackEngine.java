@@ -1,7 +1,9 @@
 package site.leawsic.livehelper.engine;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
+import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.templates.MotionTemplate;
 import site.leawsic.livehelper.engine.templates.MotionTemplates;
 import site.leawsic.livehelper.engine.templates.PathTemplate;
@@ -32,10 +34,26 @@ public class PlaybackEngine {
         for (ClipSlot slot : manager.clips()) {
             Clip clip = clipCache.get(slot.clipId());
             if (clip != null && "PATH".equals(clip.template())) {
-                Double encoded = clip.params().get("keyframes");
-                if (encoded != null) {
-                }
+                parsePathKeyframes(slot.clipId(), clip.params().get("keyframes"));
             }
+        }
+    }
+
+    private void parsePathKeyframes(int clipId, Object raw) {
+        if (raw == null) return;
+        try {
+            JsonElement element;
+            if (raw instanceof String string) {
+                element = GSON.fromJson(string, JsonElement.class);
+            } else {
+                element = GSON.toJsonTree(raw);
+            }
+            List<PathTemplate.Keyframe> keyframes = GSON.fromJson(element, KEYFRAME_LIST_TYPE);
+            if (keyframes != null && !keyframes.isEmpty()) {
+                pathCache.put(clipId, keyframes);
+            }
+        } catch (Exception e) {
+            LiveHelper.LOGGER.warn("Failed to parse PATH keyframes for clip {}", clipId, e);
         }
     }
 
@@ -53,7 +71,7 @@ public class PlaybackEngine {
                 progress = Math.min(progress, 0.9999f);
 
                 if ("PATH".equals(clip.template()) && pathCache.containsKey(slot.clipId())) {
-                    float fov = clip.params().getOrDefault("fov", 70.0).floatValue();
+                    float fov = MotionTemplates.pf(clip.params(), "fov", 70f);
                     return PathTemplate.evaluateFromKeyframes(pathCache.get(slot.clipId()), progress, fov);
                 }
 
