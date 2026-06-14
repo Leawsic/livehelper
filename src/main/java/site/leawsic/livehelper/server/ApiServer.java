@@ -39,9 +39,9 @@ public final class ApiServer {
 
         server.createContext("/api/clips", new ClipsHandler());
         server.createContext("/api/managers", new ManagersHandler());
-        server.createContext("/api/manager/", new ManagerDetailHandler());
+        server.createContext("/api/manager/", new ManagerDetailHandler("/api/manager/"));
         server.createContext("/api/pose", new PoseHandler());
-        server.createContext("/api/templates", exchange -> sendJson(exchange, 200, GSON.toJson(MotionTemplates.getAvailable())));
+        server.createContext("/api/templates", new TemplatesHandler());
         server.createContext("/", new StaticFileHandler());
 
         server.start();
@@ -98,11 +98,23 @@ public final class ApiServer {
         protected abstract void handleInternal(HttpExchange exchange) throws IOException;
     }
 
+    static class TemplatesHandler extends BaseRestHandler {
+        @Override
+        protected void handleInternal(HttpExchange exchange) throws IOException {
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "GET required");
+                return;
+            }
+            sendJson(exchange, 200, GSON.toJson(MotionTemplates.getAvailable()));
+        }
+    }
+
     static class ClipsHandler extends BaseRestHandler {
         @Override
         protected void handleInternal(HttpExchange exchange) throws IOException {
             try {
                 String method = exchange.getRequestMethod();
+                String path = exchange.getRequestURI().getPath();
                 if ("GET".equals(method)) {
                     sendJson(exchange, 200, GSON.toJson(StorageManager.getInstance().getAllClips()));
                 } else if ("POST".equals(method)) {
@@ -111,11 +123,11 @@ public final class ApiServer {
                     res.addProperty("id", created.id());
                     sendJson(exchange, 201, res.toString());
                 } else if ("PUT".equals(method)) {
-                    int id = extractId(exchange.getRequestURI().getPath(), "/api/clips/");
+                    int id = extractId(path, "/api/clips/");
                     StorageManager.getInstance().updateClip(id, GSON.fromJson(readBody(exchange), Clip.class));
                     sendJson(exchange, 200, "{}");
                 } else if ("DELETE".equals(method)) {
-                    int id = extractId(exchange.getRequestURI().getPath(), "/api/clips/");
+                    int id = extractId(path, "/api/clips/");
                     StorageManager.getInstance().deleteClip(id);
                     sendJson(exchange, 200, "{}");
                 } else {
@@ -132,6 +144,13 @@ public final class ApiServer {
         protected void handleInternal(HttpExchange exchange) throws IOException {
             try {
                 String method = exchange.getRequestMethod();
+                String path = exchange.getRequestURI().getPath();
+
+                if (path.startsWith("/api/managers/") && path.length() > "/api/managers/".length()) {
+                    handleManagerDetail(exchange, "/api/managers/");
+                    return;
+                }
+
                 if ("GET".equals(method)) {
                     sendJson(exchange, 200, GSON.toJson(StorageManager.getInstance().getAllManagers()));
                 } else if ("POST".equals(method)) {
@@ -139,15 +158,6 @@ public final class ApiServer {
                     JsonObject res = new JsonObject();
                     res.addProperty("id", created.id());
                     sendJson(exchange, 201, res.toString());
-                } else if ("PUT".equals(method)) {
-                    int id = extractId(exchange.getRequestURI().getPath(), "/api/managers/");
-                    StorageManager.getInstance().updateManager(id, GSON.fromJson(readBody(exchange), Manager.class));
-                    sendJson(exchange, 200, "{}");
-                } else if ("DELETE".equals(method)) {
-                    int id = extractId(exchange.getRequestURI().getPath(), "/api/managers/");
-                    StreamManager.INSTANCE.stop(id);
-                    StorageManager.getInstance().deleteManager(id);
-                    sendJson(exchange, 200, "{}");
                 } else {
                     sendError(exchange, 405, "Method not allowed");
                 }
@@ -158,32 +168,67 @@ public final class ApiServer {
     }
 
     static class ManagerDetailHandler extends BaseRestHandler {
+        private final String prefix;
+
+        ManagerDetailHandler(String prefix) {
+            this.prefix = prefix;
+        }
+
         @Override
         protected void handleInternal(HttpExchange exchange) throws IOException {
             try {
-                String path = exchange.getRequestURI().getPath();
-                int id = extractId(path, "/api/manager/");
-                String action = path.substring(("/api/manager/" + id).length());
-
-                switch (action) {
-                    case "/start" -> {
-                        StreamManager.INSTANCE.start(id);
-                        sendJson(exchange, 200, "{}");
-                    }
-                    case "/stop" -> {
-                        StreamManager.INSTANCE.stop(id);
-                        sendJson(exchange, 200, "{}");
-                    }
-                    case "/status" -> {
-                        JsonObject res = new JsonObject();
-                        res.addProperty("status", StreamManager.INSTANCE.getStatus(id).name().toLowerCase());
-                        sendJson(exchange, 200, res.toString());
-                    }
-                    default -> sendError(exchange, 404, "Unknown action: " + action);
-                }
+                handleManagerDetail(exchange, prefix);
             } catch (Exception e) {
                 sendError(exchange, 400, e.getMessage());
             }
+        }
+    }
+
+    private static void handleManagerDetail(HttpExchange exchange, String prefix) throws IOException {
+        String path = exchange.getRequestURI().getPath();
+        String method = exchange.getRequestMethod();
+        int id = extractId(path, prefix);
+        String action = path.substring((prefix + id).length());
+
+        switch (action) {
+            case "" -> {
+                if ("PUT".equals(method)) {
+                    StorageManager.getInstance().updateManager(id, GSON.fromJson(readBody(exchange), Manager.class));
+                    sendJson(exchange, 200, "{}");
+                } else if ("DELETE".equals(method)) {
+                    StreamManager.INSTANCE.stop(id);
+                    StorageManager.getInstance().deleteManager(id);
+                    sendJson(exchange, 200, "{}");
+                } else {
+                    sendError(exchange, 405, "PUT or DELETE required");
+                }
+            }
+            case "/start" -> {
+                if (!"POST".equals(method)) {
+                    sendError(exchange, 405, "POST required");
+                    return;
+                }
+                StreamManager.INSTANCE.start(id);
+                sendJson(exchange, 200, "{}");
+            }
+            case "/stop" -> {
+                if (!"POST".equals(method)) {
+                    sendError(exchange, 405, "POST required");
+                    return;
+                }
+                StreamManager.INSTANCE.stop(id);
+                sendJson(exchange, 200, "{}");
+            }
+            case "/status" -> {
+                if (!"GET".equals(method)) {
+                    sendError(exchange, 405, "GET required");
+                    return;
+                }
+                JsonObject res = new JsonObject();
+                res.addProperty("status", StreamManager.INSTANCE.getStatus(id).name().toLowerCase());
+                sendJson(exchange, 200, res.toString());
+            }
+            default -> sendError(exchange, 404, "Unknown action: " + action);
         }
     }
 
@@ -236,6 +281,8 @@ public final class ApiServer {
             if (path.endsWith(".html")) contentType = "text/html; charset=utf-8";
             else if (path.endsWith(".js")) contentType = "application/javascript; charset=utf-8";
             else if (path.endsWith(".css")) contentType = "text/css; charset=utf-8";
+            else if (path.endsWith(".png")) contentType = "image/png";
+            else if (path.endsWith(".svg")) contentType = "image/svg+xml";
 
             exchange.getResponseHeaders().set("Content-Type", contentType);
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");

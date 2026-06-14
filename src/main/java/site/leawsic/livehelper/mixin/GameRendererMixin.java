@@ -1,5 +1,7 @@
 package site.leawsic.livehelper.mixin;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Final;
@@ -18,6 +20,13 @@ public class GameRendererMixin {
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
         if (ActiveRenderContext.isActive()) {
             minecraft.options.hideGui = true;
+        }
+    }
+
+    @Inject(method = "renderItemInHand", at = @At("HEAD"), cancellable = true)
+    private void beforeRenderItemInHand(PoseStack poseStack, Camera camera, float tickDelta, CallbackInfo ci) {
+        if (ActiveRenderContext.isActive()) {
+            ci.cancel();
         }
     }
 }

@@ -23,12 +23,8 @@ dependencies {
     // Fabric API. This is technically optional, but you probably want it anyway.
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    // fabric mod development env has already include these resources
-//    // Spout native binding (JNA)
+    // Spout native binding (JNA)
     include implementation("net.java.dev.jna:jna:5.12.1")
-//
-//    // OSHI - platform detection (includes JNA)
-//    implementation("com.github.oshi:oshi-core:6.4.0")
 }
 
 processResources {

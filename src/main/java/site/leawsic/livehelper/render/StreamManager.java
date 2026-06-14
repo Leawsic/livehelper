@@ -1,5 +1,6 @@
 package site.leawsic.livehelper.render;
 
+import net.minecraft.client.Minecraft;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
 import site.leawsic.livehelper.model.Clip;
@@ -16,8 +17,23 @@ public enum StreamManager {
     INSTANCE;
 
     private final Map<Integer, StreamInstance> activeStreams = new ConcurrentHashMap<>();
+    private final Set<Integer> pendingStarts = ConcurrentHashMap.newKeySet();
+    private final Set<Integer> pendingStops = ConcurrentHashMap.newKeySet();
 
-    public synchronized void start(int managerId) {
+    public void start(int managerId) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!mc.isSameThread()) {
+            if (activeStreams.containsKey(managerId) || !pendingStarts.add(managerId)) return;
+            mc.execute(() -> {
+                pendingStarts.remove(managerId);
+                startOnMainThread(managerId);
+            });
+            return;
+        }
+        startOnMainThread(managerId);
+    }
+
+    private synchronized void startOnMainThread(int managerId) {
         if (activeStreams.containsKey(managerId)) {
             LiveHelper.LOGGER.warn("Manager {} is already running", managerId);
             return;
@@ -42,7 +58,21 @@ public enum StreamManager {
         LiveHelper.LOGGER.info("Started stream for manager: {}", manager.name());
     }
 
-    public synchronized void stop(int managerId) {
+    public void stop(int managerId) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!mc.isSameThread()) {
+            pendingStarts.remove(managerId);
+            if (!pendingStops.add(managerId)) return;
+            mc.execute(() -> {
+                pendingStops.remove(managerId);
+                stopOnMainThread(managerId);
+            });
+            return;
+        }
+        stopOnMainThread(managerId);
+    }
+
+    private synchronized void stopOnMainThread(int managerId) {
         StreamInstance instance = activeStreams.remove(managerId);
         if (instance != null) {
             instance.close();
@@ -54,6 +84,7 @@ public enum StreamManager {
         for (int id : new ArrayList<>(activeStreams.keySet())) {
             stop(id);
         }
+        pendingStarts.clear();
     }
 
     public boolean hasActive() {
