@@ -8,7 +8,8 @@
         "GameRendererAccessor",
         "LightTextureAccessor",
         "MinecraftAccessor",
-        "MinecraftMixin"
+        "MinecraftMixin",
+        "GameRendererMixin"
     ],
     "injectors": {
         "defaultRequire": 1

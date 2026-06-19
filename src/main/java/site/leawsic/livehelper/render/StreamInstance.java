@@ -3,24 +3,18 @@ package site.leawsic.livehelper.render;
 import com.mojang.blaze3d.pipeline.MainTarget;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.math.Axis;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import org.joml.Matrix4f;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
-import site.leawsic.livehelper.mixin.CameraAccessor;
 import site.leawsic.livehelper.mixin.GameRendererAccessor;
-import site.leawsic.livehelper.mixin.LightTextureAccessor;
 import site.leawsic.livehelper.mixin.MinecraftAccessor;
+import site.leawsic.livehelper.util.OffscreenTargetTracker;
 import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.scheduler.MainScheduler;
 import site.leawsic.livehelper.spout.SpoutSender;
-import site.leawsic.livehelper.util.AngleConvert;
+import site.leawsic.livehelper.util.ActiveRenderContext;
 
 import java.util.concurrent.TimeUnit;
 
@@ -30,6 +24,7 @@ public class StreamInstance implements AutoCloseable {
     private final PlaybackEngine engine;
     private final MainTarget renderTarget;
     private final SpoutSender spoutSender;
+    private final Camera virtualCamera;
     private final long frameIntervalNs;
 
     private boolean stopped;
@@ -39,6 +34,7 @@ public class StreamInstance implements AutoCloseable {
         this.managerId = managerId;
         this.config = manager;
         this.engine = engine;
+        this.virtualCamera = new Camera();
         this.frameIntervalNs = TimeUnit.SECONDS.toNanos(1) / Math.max(1, manager.fps());
         this.renderTarget = new MainTarget(manager.width(), manager.height());
         this.renderTarget.setClearColor(0f, 0f, 0f, 1f);
@@ -77,57 +73,20 @@ public class StreamInstance implements AutoCloseable {
             RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
             renderTarget.clear(Minecraft.ON_OSX);
 
-            // ── Create virtual camera and position via FrameCommand ──
-            Camera camera = new Camera();
-            camera.setup(mc.level, mc.player, false, false, 1.0F);
+            // ── Set up virtual camera ──
+            CameraSetup.apply(virtualCamera, cmd,
+                config.width(), config.height(), config.renderDistance());
 
-            CameraAccessor camAccessor = (CameraAccessor) camera;
-            camAccessor.livehelper$setPosition(cmd.x(), cmd.y(), cmd.z());
-            Vector3f angles = AngleConvert.toEulerAngles(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
-            camAccessor.livehelper$setRotation(angles.y, angles.x);
+            // ── Swap mainCamera so GameRenderer uses our camera ──
+            grAccessor.livehelper$setMainCamera(virtualCamera);
 
-            // ── Swap mainCamera so shaders/uniforms read our camera ──
-            grAccessor.livehelper$setMainCamera(camera);
+            // ── Register original target for mixin to swap back before GUI clear ──
+            OffscreenTargetTracker.setOriginalTarget(prevTarget);
 
-            // ── Build view matrix ──
-            // Matches vanilla GameRenderer.renderLevel(): mulPose(XP.rotDeg(xRot)),
-            // then mulPose(YP.rotDeg(yRot + 180))
-            PoseStack poseStack = new PoseStack();
-            poseStack.mulPose(Axis.XP.rotationDegrees(camera.getXRot()));
-            poseStack.mulPose(Axis.YP.rotationDegrees(camera.getYRot() + 180.0f));
-
-            // ── Build projection matrix ──
-            float aspect = (float) renderTarget.width / (float) renderTarget.height;
-            float zFar = config.renderDistance() * 16.0f;
-            Matrix4f projection = new Matrix4f().setPerspective(
-                (float) Math.toRadians(cmd.fov()), aspect, 0.05F, zFar
+            // ── Render full frame ──
+            ActiveRenderContext.runWithContext(cmd, config.width(), config.height(), config.renderDistance(),
+                () -> mc.gameRenderer.render(1.0F, System.nanoTime(), true)
             );
-
-            // ── Set projection on RenderSystem (required by world shaders) ──
-            mc.gameRenderer.resetProjectionMatrix(projection);
-
-            // ── Prepare chunk cull frustum using our camera ──
-            mc.levelRenderer.prepareCullFrustum(poseStack, camera.getPosition(), projection);
-
-            // ── Prevent light texture update from being consumed by this pass ──
-            LightTextureAccessor lightAccessor = (LightTextureAccessor) mc.gameRenderer.lightTexture();
-            lightAccessor.livehelper$setUpdateLightTexture(false);
-
-            // ── Render world directly ──
-            // Calls LevelRenderer.renderLevel() directly, bypassing GameRenderer.render()
-            // which would add GUI, hand, post-processing, and a destructive clear.
-            mc.levelRenderer.renderLevel(
-                poseStack,
-                1.0F,
-                System.nanoTime(),
-                false,
-                camera,
-                mc.gameRenderer,
-                mc.gameRenderer.lightTexture(),
-                projection
-            );
-
-            lightAccessor.livehelper$setUpdateLightTexture(true);
 
             // ── Send offscreen color texture to Spout ──
             spoutSender.send(renderTarget.frameBufferId, renderTarget.width, renderTarget.height);
@@ -135,6 +94,7 @@ public class StreamInstance implements AutoCloseable {
             LiveHelper.LOGGER.error("Error rendering stream {}", managerId, e);
         } finally {
             // ── Restore original state ──
+            OffscreenTargetTracker.clear();
             mcAccessor.livehelper$setMainRenderTarget(prevTarget);
             grAccessor.livehelper$setMainCamera(prevCamera);
             prevTarget.bindWrite(true);
@@ -143,6 +103,7 @@ public class StreamInstance implements AutoCloseable {
     }
 
     public void tick() {
+        virtualCamera.tick();
     }
 
     @Override
