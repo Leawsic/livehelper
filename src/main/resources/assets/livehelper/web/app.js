@@ -23,6 +23,34 @@ const TEMPLATE_FIELDS = {
     PATH: ['keyframes', 'fov']
 };
 
+const FIELD_LABELS = {
+    posX: '位置 X', posY: '位置 Y', posZ: '位置 Z',
+    rotX: '俯仰 Pitch', rotY: '偏航 Yaw', rotZ: '滚转 Roll',
+    fov: '视场角 FOV',
+    targetX: '目标 X', targetY: '目标 Y', targetZ: '目标 Z',
+    radius: '环绕半径', speed: '环绕速度', startAngle: '起始角度', elevation: '仰角',
+    fromX: '起点 X', fromY: '起点 Y', fromZ: '起点 Z',
+    toX: '终点 X', toY: '终点 Y', toZ: '终点 Z',
+    easing: '缓动',
+    fromHeight: '起始高度', toHeight: '结束高度', centerX: '中心 X', centerZ: '中心 Z',
+    startPan: '起始水平角', endPan: '结束水平角', startTilt: '起始俯仰角', endTilt: '结束俯仰角',
+    keyframes: '关键帧 JSON'
+};
+
+const FIELD_HELP = {
+    posX: '摄像机所在的世界 X 坐标。', posY: '摄像机所在的世界 Y 坐标，通常用玩家眼睛高度。', posZ: '摄像机所在的世界 Z 坐标。',
+    rotX: '上下看，正值向下，负值向上。', rotY: '水平朝向，使用 Minecraft yaw。', rotZ: '画面滚转角，一般保持 0。',
+    fov: '镜头视场角，数值越大越广角。',
+    targetX: '环绕时始终看向的目标 X 坐标。', targetY: '环绕时始终看向的目标 Y 坐标。', targetZ: '环绕时始终看向的目标 Z 坐标。',
+    radius: '摄像机到目标点的水平距离。', speed: 'Clip 播放期间绕目标旋转的圈数。', startAngle: '环绕起始角度，单位度。', elevation: '摄像机相对目标点的仰角，单位度。',
+    fromX: '移动起点 X 坐标。', fromY: '移动起点 Y 坐标。', fromZ: '移动起点 Z 坐标。',
+    toX: '移动终点 X 坐标。', toY: '移动终点 Y 坐标。', toZ: '移动终点 Z 坐标。',
+    easing: '控制运动速度曲线。',
+    fromHeight: '升降镜头起始 Y 高度。', toHeight: '升降镜头结束 Y 高度。', centerX: '升降镜头固定 X 坐标。', centerZ: '升降镜头固定 Z 坐标。',
+    startPan: '水平旋转起始角度。', endPan: '水平旋转结束角度。', startTilt: '俯仰起始角度。', endTilt: '俯仰结束角度。',
+    keyframes: '数组 JSON。每个关键帧包含 t、x、y、z、rx、ry、rz。t 范围为 0 到 1。'
+};
+
 let clips = [];
 let managers = [];
 let statuses = new Map();
@@ -156,7 +184,8 @@ function renderManagers() {
         const slots = (manager.clips || []).map(slot => {
             const clip = clips.find(c => c.id === slot.clipId);
             const label = clip ? `${escapeHtml(clip.name)} (${clip.template}, ${clip.duration}ms)` : '(missing)';
-            return `<button class="inline-copy" data-copy="${slot.clipId}" title="复制 Clip ID">#${slot.clipId}</button> ${label} @ ${slot.startOffset}ms`;
+            const transition = Number(slot.transitionDuration || 0) > 0 ? `, 转场 ${slot.transitionDuration}ms ${slot.transitionEasing || 'linear'}` : '';
+            return `<button class="inline-copy" data-copy="${slot.clipId}" title="复制 Clip ID">#${slot.clipId}</button> ${label} @ ${slot.startOffset}ms${transition}`;
         }).join('<br>');
         const totalDuration = managerDuration(manager);
         root.appendChild(card(`
@@ -217,14 +246,16 @@ function renderParamFields(template, params) {
     const root = byId('param-fields');
     root.innerHTML = TEMPLATE_FIELDS[template].map(key => {
         const value = params[key] ?? defaultParam(key);
+        const label = FIELD_LABELS[key] || key;
+        const help = FIELD_HELP[key] || key;
         if (key === 'easing') {
-            return `<label>${key}<select data-param="${key}">${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(v => `<option ${v === value ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+            return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><select data-param="${key}">${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(v => `<option ${v === value ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="help">${escapeHtml(help)}</span></label>`;
         }
         if (key === 'keyframes') {
             const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-            return `<label class="full">${key}<textarea data-param="${key}" rows="8">${escapeHtml(text)}</textarea><span class="help">支持数组 JSON，例如 [{"t":0,"x":0,"y":80,"z":0,"rx":0,"ry":0,"rz":0}]</span></label>`;
+            return `<label class="full" title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><textarea data-param="${key}" rows="8">${escapeHtml(text)}</textarea><span class="help">${escapeHtml(help)}</span></label>`;
         }
-        return `<label>${key}<input data-param="${key}" type="number" step="0.1" value="${escapeAttr(value)}"></label>`;
+        return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" type="number" step="0.1" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
     }).join('');
 }
 
@@ -234,7 +265,7 @@ function openManagerEditor(manager = null) {
         return;
     }
     const isEdit = !!manager;
-    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, clips: [{clipId: clips[0].id, startOffset: 0}]});
+    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, clips: [{clipId: clips[0].id, startOffset: 0, transitionDuration: 0, transitionEasing: 'linear'}]});
     byId('editor-title').textContent = isEdit ? `编辑 Manager #${data.id}` : '新建 Manager';
     byId('editor-fields').innerHTML = `
         <div class="form-grid">
@@ -254,7 +285,7 @@ function openManagerEditor(manager = null) {
         const slots = collectSlots();
         const last = slots.at(-1);
         const lastClip = last ? clips.find(c => c.id === last.clipId) : null;
-        slots.push({clipId: clips[0].id, startOffset: last ? last.startOffset + (lastClip?.duration || 1000) : 0});
+        slots.push({clipId: clips[0].id, startOffset: last ? last.startOffset + (lastClip?.duration || 1000) : 0, transitionDuration: 800, transitionEasing: 'easeInOut'});
         renderSlots(slots);
     });
 
@@ -285,6 +316,8 @@ function renderSlots(slots) {
         row.innerHTML = `
             <label>Clip<select data-slot-clip>${clips.map(clip => `<option value="${clip.id}" ${clip.id === slot.clipId ? 'selected' : ''}>#${clip.id} ${escapeHtml(clip.name)} (${clip.template}, ${clip.duration}ms)</option>`).join('')}</select></label>
             <label>开始(ms)<input data-slot-offset type="number" min="0" value="${slot.startOffset || 0}"></label>
+            <label>转场(ms)<input data-slot-transition-duration type="number" min="0" value="${slot.transitionDuration || 0}"></label>
+            <label>缓动<select data-slot-transition-easing>${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(easing => `<option ${easing === (slot.transitionEasing || 'linear') ? 'selected' : ''}>${easing}</option>`).join('')}</select></label>
             <div class="card-actions">
                 <button type="button" data-slot-up>↑</button>
                 <button type="button" data-slot-down>↓</button>
@@ -314,7 +347,9 @@ function moveSlot(index, delta) {
 function collectSlots() {
     return [...document.querySelectorAll('.slot-row')].map(row => ({
         clipId: Number(row.querySelector('[data-slot-clip]').value),
-        startOffset: Number(row.querySelector('[data-slot-offset]').value || 0)
+        startOffset: Number(row.querySelector('[data-slot-offset]').value || 0),
+        transitionDuration: Number(row.querySelector('[data-slot-transition-duration]').value || 0),
+        transitionEasing: row.querySelector('[data-slot-transition-easing]').value || 'linear'
     })).sort((a, b) => a.startOffset - b.startOffset);
 }
 

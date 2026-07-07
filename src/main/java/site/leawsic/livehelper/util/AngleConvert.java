@@ -31,16 +31,16 @@ public final class AngleConvert {
         double dx = toX - fromX;
         double dy = toY - fromY;
         double dz = toZ - fromZ;
-        double yaw = Math.atan2(dz, dx);
         double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        double yaw = Math.atan2(-dx, dz);
         double pitch = -Math.atan2(dy, horizontalDist);
 
         return toQuaternion((float) Math.toDegrees(pitch), (float) Math.toDegrees(yaw), 0f);
     }
 
     public static Quaternionf lookInDirection(double dx, double dy, double dz) {
-        double yaw = Math.atan2(dz, dx);
         double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        double yaw = Math.atan2(-dx, dz);
         double pitch = -Math.atan2(dy, horizontalDist);
         return toQuaternion((float) Math.toDegrees(pitch), (float) Math.toDegrees(yaw), 0f);
     }

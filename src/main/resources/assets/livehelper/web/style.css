@@ -178,6 +178,16 @@ main { padding: 30px 32px 64px; }
 }
 
 label { display: block; margin: 12px 0; color: #cbd5e1; font-size: 13px; }
+.field-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+.field-title small {
+    color: var(--muted);
+    font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
 input, select, textarea {
     width: 100%;
     margin-top: 6px;
@@ -204,7 +214,7 @@ textarea { min-height: 110px; resize: vertical; }
 }
 .slot-row {
     display: grid;
-    grid-template-columns: 1.4fr 130px auto;
+    grid-template-columns: 1.4fr 120px 120px 130px auto;
     gap: 10px;
     align-items: end;
     margin: 10px 0;
