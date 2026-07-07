@@ -1,18 +1,20 @@
 package site.leawsic.livehelper.mixin;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
-import org.spongepowered.asm.mixin.Final;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Overwrite;
-import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.render.CameraSetup;
+import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.util.ActiveRenderContext;
 import site.leawsic.livehelper.util.OffscreenTargetTracker;
 
@@ -25,60 +27,91 @@ public class GameRendererMixin {
     @Shadow private float zoomY;
     @Shadow public native float getDepthFar();
 
-    /**
-     * Before renderLevel: disable hand rendering to prevent the hand clear
-     * that would wipe the world from our offscreen target.
-     */
+    @Unique
+    private static long livehelper$lastRedirectLogNs = 0L;
+
+    @Inject(method = "render", at = @At("HEAD"))
+    private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
+        if (ActiveRenderContext.isOffscreenActive()) {
+            minecraft.options.hideGui = true;
+        }
+    }
+
+    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;pauseGame(Z)V"))
+    private void skipAutoPauseDuringStream(Minecraft minecraft, boolean pauseOnly) {
+        if (!StreamManager.INSTANCE.hasActive()) {
+            minecraft.pauseGame(pauseOnly);
+        }
+    }
+
+    @Inject(method = "render", at = @At(
+        value = "INVOKE",
+        target = "Lcom/mojang/blaze3d/systems/RenderSystem;viewport(IIII)V",
+        ordinal = 0,
+        shift = At.Shift.AFTER
+    ))
+    private void afterViewportSet(CallbackInfo ci) {
+        ActiveRenderContext.Context ctx = ActiveRenderContext.current();
+        if (ctx != null) {
+            RenderSystem.viewport(0, 0, ctx.width(), ctx.height());
+        }
+    }
+
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void beforeRenderLevel(float tickDelta, long startNano, PoseStack poseStack, CallbackInfo ci) {
-        if (ActiveRenderContext.isActive()) {
+        if (ActiveRenderContext.isOffscreenActive()) {
             this.renderHand = false;
         }
     }
 
-    /**
-     * After camera.setup() inside renderLevel, re-apply virtual camera position/rotation.
-     */
-    @Inject(method = "renderLevel", at = @At(
+    @Redirect(method = "renderLevel", at = @At(
         value = "INVOKE",
-        target = "Lnet/minecraft/client/Camera;setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V",
-        shift = At.Shift.AFTER
+        target = "Lnet/minecraft/client/Camera;setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V"
     ))
-    private void afterCameraSetup(float tickDelta, long startNano, PoseStack poseStack, CallbackInfo ci) {
+    private void setupVirtualCamera(Camera camera, net.minecraft.world.level.BlockGetter level,
+                                    net.minecraft.world.entity.Entity entity, boolean detached,
+                                    boolean inverseView, float tickDelta) {
+        camera.setup(level, entity, detached, inverseView, tickDelta);
         ActiveRenderContext.Context ctx = ActiveRenderContext.current();
         if (ctx != null) {
-            CameraSetup.applyAfterSetup(((GameRenderer)(Object) this).getMainCamera(), ctx.command());
+            CameraSetup.applyAfterSetup(camera, ctx.command());
+            long now = System.nanoTime();
+            if (now - livehelper$lastRedirectLogNs > 2_000_000_000L) {
+                livehelper$lastRedirectLogNs = now;
+                LiveHelper.LOGGER.info(
+                    "GameRenderer camera redirected: cmd=({}, {}, {}) camera=({}, {}, {}) rot=({}, {})",
+                    ctx.command().x(), ctx.command().y(), ctx.command().z(),
+                    camera.getPosition().x, camera.getPosition().y, camera.getPosition().z,
+                    camera.getYRot(), camera.getXRot()
+                );
+            }
         }
     }
 
-    /**
-     * Right after renderLevel returns and before the GUI clear: swap mainRenderTarget
-     * back to the original window target so the GUI clear/draw hits the window,
-     * preserving our offscreen target with the world content.
-     */
+    @Inject(method = "renderItemInHand", at = @At("HEAD"), cancellable = true)
+    private void beforeRenderItemInHand(PoseStack poseStack, Camera camera, float tickDelta, CallbackInfo ci) {
+        if (ActiveRenderContext.isOffscreenActive()) {
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "render", at = @At(
         value = "INVOKE",
         target = "Lnet/minecraft/client/renderer/GameRenderer;tryTakeScreenshotIfNeeded()V",
         shift = At.Shift.AFTER
     ))
     private void afterRenderLevelSwapBack(CallbackInfo ci) {
-        RenderTarget orig = OffscreenTargetTracker.getOriginalTarget();
-        if (orig != null) {
+        RenderTarget original = OffscreenTargetTracker.getOriginalTarget();
+        if (original != null) {
             OffscreenTargetTracker.clear();
-            minecraft.getMainRenderTarget(); // ensure resolved
-            try {
-                java.lang.reflect.Field targetField = Minecraft.class.getDeclaredField("mainRenderTarget");
-                targetField.setAccessible(true);
-                targetField.set(minecraft, orig);
-            } catch (Exception e) {
-                // fallback, shouldn't happen
-            }
-            orig.bindWrite(true);
+            ((MinecraftAccessor) minecraft).livehelper$setMainRenderTarget(original);
+            original.bindWrite(true);
         }
     }
 
     /**
-     * Override projection matrix to use stream FOV/dimensions during offscreen rendering.
+     * @author Leawsic
+     * @reason Offscreen streams need their own aspect ratio, FOV, and far plane.
      */
     @Overwrite
     public Matrix4f getProjectionMatrix(double fov) {
@@ -88,20 +121,24 @@ public class GameRendererMixin {
             stack.translate(this.zoomX, -this.zoomY, 0.0F);
             stack.scale(this.zoom, this.zoom, 1.0F);
         }
-        float fovRad;
-        float aspect;
-        float depthFar;
+
         ActiveRenderContext.Context ctx = ActiveRenderContext.current();
         if (ctx != null) {
-            fovRad = (float) Math.toRadians(ctx.command().fov());
-            aspect = (float) ctx.width() / (float) ctx.height();
-            depthFar = ctx.renderDistance() * 16.0f;
+            stack.last().pose().mul(new Matrix4f().setPerspective(
+                (float) Math.toRadians(ctx.command().fov()),
+                (float) ctx.width() / (float) ctx.height(),
+                0.05F,
+                ctx.renderDistance() * 16.0F
+            ));
         } else {
-            fovRad = (float) (fov * 0.01745329238474369);
-            aspect = (float) minecraft.getWindow().getWidth() / (float) minecraft.getWindow().getHeight();
-            depthFar = this.getDepthFar();
+            stack.last().pose().mul(new Matrix4f().setPerspective(
+                (float) (fov * 0.01745329238474369),
+                (float) minecraft.getWindow().getWidth() / (float) minecraft.getWindow().getHeight(),
+                0.05F,
+                this.getDepthFar()
+            ));
         }
-        stack.last().pose().mul(new Matrix4f().setPerspective(fovRad, aspect, 0.05F, depthFar));
+
         return stack.last().pose();
     }
 }

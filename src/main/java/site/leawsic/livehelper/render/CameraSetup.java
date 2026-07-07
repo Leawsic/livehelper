@@ -4,12 +4,15 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.mixin.CameraAccessor;
 import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.util.AngleConvert;
 
 public final class CameraSetup {
     private CameraSetup() {}
+
+    private static long lastDebugLogNs = 0L;
 
     public static void apply(Camera camera, FrameCommand cmd, int width, int height, int renderDistance) {
         Minecraft mc = Minecraft.getInstance();
@@ -25,5 +28,17 @@ public final class CameraSetup {
 
         Vector3f angles = AngleConvert.toEulerAngles(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
         accessor.livehelper$setRotation(angles.y, angles.x);
+        accessor.livehelper$setInitialized(true);
+
+        long now = System.nanoTime();
+        if (now - lastDebugLogNs > 2_000_000_000L) {
+            lastDebugLogNs = now;
+            LiveHelper.LOGGER.info(
+                "Virtual camera applied: cmd=({}, {}, {}) euler=({}, {}, {}) camera=({}, {}, {}) rot=({}, {})",
+                cmd.x(), cmd.y(), cmd.z(), angles.x, angles.y, angles.z,
+                camera.getPosition().x, camera.getPosition().y, camera.getPosition().z,
+                camera.getYRot(), camera.getXRot()
+            );
+        }
     }
 }
