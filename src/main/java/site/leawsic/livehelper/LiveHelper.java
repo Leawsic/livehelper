@@ -4,11 +4,14 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.server.ApiServer;
 import site.leawsic.livehelper.storage.StorageManager;
+
+import java.net.URI;
 
 @Environment(EnvType.CLIENT)
 public class LiveHelper implements ClientModInitializer {
@@ -23,6 +26,7 @@ public class LiveHelper implements ClientModInitializer {
 
         try {
             ApiServer.start();
+            Util.getPlatform().openUri(URI.create("http://localhost:23512/"));
         } catch (Exception e) {
             LOGGER.error("Failed to start API server", e);
         }

@@ -26,6 +26,8 @@ const TEMPLATE_FIELDS = {
 let clips = [];
 let managers = [];
 let statuses = new Map();
+let worldState = {ready: false, pose: null};
+let refreshing = false;
 
 function jsonRequest(method, data) {
     return {method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)};
@@ -42,10 +44,17 @@ async function request(url, options = {}) {
 }
 
 async function refreshAll() {
+    if (refreshing) return;
+    refreshing = true;
     setBusy(true);
     try {
         clips = await API.getClips();
         managers = await API.getManagers();
+        try {
+            worldState = {ready: true, pose: await API.getPose()};
+        } catch (_) {
+            worldState = {ready: false, pose: null};
+        }
         statuses = new Map(await Promise.all(managers.map(async manager => {
             try {
                 return [manager.id, (await API.getManagerStatus(manager.id)).status];
@@ -53,13 +62,27 @@ async function refreshAll() {
                 return [manager.id, 'unknown'];
             }
         })));
+        renderWorldStatus();
         renderOverview();
         renderClips();
         renderManagers();
     } catch (error) {
         toast(error.message, 'bad');
     } finally {
+        refreshing = false;
         setBusy(false);
+    }
+}
+
+function renderWorldStatus() {
+    const root = byId('world-status');
+    if (worldState.ready) {
+        const pose = worldState.pose;
+        root.className = 'status-banner ready';
+        root.innerHTML = `已连接世界 <span>${formatNumber(pose.x)}, ${formatNumber(pose.y)}, ${formatNumber(pose.z)}</span>`;
+    } else {
+        root.className = 'status-banner warn';
+        root.textContent = 'Minecraft 客户端已连接，尚未进入世界。进入世界后可读取玩家位姿并启动推流。';
     }
 }
 
@@ -76,6 +99,7 @@ function renderOverview() {
     }
     managers.forEach(manager => {
         const status = statuses.get(manager.id) || 'stopped';
+        const totalDuration = managerDuration(manager);
         root.appendChild(card(`
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
@@ -83,8 +107,10 @@ function renderOverview() {
                 <span class="badge ${status}">${status}</span>
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
+                <span class="badge">${totalDuration}ms</span>
             </div>
             <p>OBS Sender: <strong>LiveHelper-${escapeHtml(manager.name)}</strong></p>
+            <p>${manager.clips?.length || 0} clips, render distance ${manager.renderDistance}</p>
             <div class="card-actions">
                 <button class="primary" data-start-manager="${manager.id}">启动</button>
                 <button data-stop-manager="${manager.id}">停止</button>
@@ -104,9 +130,10 @@ function renderClips() {
         root.appendChild(card(`
             <h3>${escapeHtml(clip.name)}</h3>
             <div class="badge-row">
-                <span class="badge id">Clip #${clip.id}</span>
+                <button class="badge id copy-badge" data-copy="${clip.id}" title="复制 Clip ID">Clip #${clip.id}</button>
                 <span class="badge">${clip.template}</span>
                 <span class="badge">${clip.duration}ms</span>
+                <span class="badge">${Object.keys(clip.params || {}).length} params</span>
             </div>
             <pre class="params">${escapeHtml(JSON.stringify(clip.params || {}, null, 2))}</pre>
             <div class="card-actions">
@@ -128,8 +155,10 @@ function renderManagers() {
         const status = statuses.get(manager.id) || 'stopped';
         const slots = (manager.clips || []).map(slot => {
             const clip = clips.find(c => c.id === slot.clipId);
-            return `#${slot.clipId} ${clip ? escapeHtml(clip.name) : '(missing)'} @ ${slot.startOffset}ms`;
+            const label = clip ? `${escapeHtml(clip.name)} (${clip.template}, ${clip.duration}ms)` : '(missing)';
+            return `<button class="inline-copy" data-copy="${slot.clipId}" title="复制 Clip ID">#${slot.clipId}</button> ${label} @ ${slot.startOffset}ms`;
         }).join('<br>');
+        const totalDuration = managerDuration(manager);
         root.appendChild(card(`
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
@@ -138,6 +167,7 @@ function renderManagers() {
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 <span class="badge">RD ${manager.renderDistance}</span>
+                <span class="badge">${totalDuration}ms</span>
             </div>
             <p>${slots || 'No clips in timeline'}</p>
             <div class="card-actions">
@@ -334,6 +364,31 @@ function defaultParam(key) {
     return 0;
 }
 
+function managerDuration(manager) {
+    return (manager.clips || []).reduce((max, slot) => {
+        const clip = clips.find(c => c.id === slot.clipId);
+        return Math.max(max, Number(slot.startOffset || 0) + Number(clip?.duration || 0));
+    }, 0);
+}
+
+function formatNumber(value) {
+    return Number(value).toFixed(2);
+}
+
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(String(text));
+    } catch (_) {
+        const input = document.createElement('input');
+        input.value = String(text);
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        input.remove();
+    }
+    toast(`已复制 ${text}`, 'good');
+}
+
 function positiveNumber(selector, fallback) {
     const value = Number(val(selector));
     return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -367,10 +422,16 @@ document.querySelectorAll('nav button').forEach(button => {
     });
 });
 
+window.addEventListener('focus', () => refreshAll());
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshAll();
+});
+
 document.addEventListener('click', async event => {
     const target = event.target;
     try {
         if (target.id === 'refresh-overview') await refreshAll();
+        if (target.dataset.copy) await copyText(target.dataset.copy);
         if (target.id === 'new-clip') openClipEditor();
         if (target.id === 'new-manager') openManagerEditor();
         if (target.dataset.editClip) openClipEditor(clips.find(c => c.id === Number(target.dataset.editClip)));

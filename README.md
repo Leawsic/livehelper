@@ -21,9 +21,9 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
   - `PAN_TILT`
   - `PATH`
 - 自定义主线程帧调度器 `MainScheduler`
-- 离屏 `MainTarget` 渲染
-- Spout2 DLL + JNA 发送 FBO 到 OBS
-- 摄像机帧渲染时隐藏 GUI 并跳过手部渲染
+- 主摄像机接管式虚拟机位推流
+- Spout2 DLL + JNA 发送主窗口 FBO 到 OBS
+- Stream 活跃时阻止失焦自动暂停，手动 ESC 暂停仍保留
 
 ## 环境要求
 
@@ -67,9 +67,10 @@ BUILD SUCCESSFUL
 游戏启动后，Mod 会：
 
 1. 初始化 `StorageManager`
-2. 启动本地 API 服务器：`http://localhost:23512`
+2. 启动本地 API 服务器
 3. 注册客户端 tick 回调
 4. 加载 Web UI 静态资源
+5. 自动打开 Web UI：`http://localhost:23512/`
 
 ## Web UI 使用
 
@@ -84,6 +85,8 @@ http://localhost:23512
 - 总览
 - Clips
 - Managers
+- 世界连接状态提示
+- Clip ID 点击复制
 
 ### 创建 Clip
 

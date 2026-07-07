@@ -122,6 +122,18 @@ main { padding: 30px 32px 64px; }
 .card p { color: var(--muted); line-height: 1.55; }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
+.status-banner {
+    margin-bottom: 20px;
+    padding: 13px 16px;
+    color: var(--muted);
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+}
+.status-banner.ready { color: #bbf7d0; border-color: rgba(34, 197, 94, 0.36); }
+.status-banner.warn { color: #fde68a; border-color: rgba(245, 158, 11, 0.42); }
+.status-banner span { color: var(--text); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
 .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .badge {
     display: inline-flex;
@@ -137,6 +149,20 @@ main { padding: 30px 32px 64px; }
 .badge.id { color: #fef3c7; background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.32); }
 .badge.running { color: #bbf7d0; background: rgba(34, 197, 94, 0.16); border-color: rgba(34, 197, 94, 0.36); }
 .badge.stopped { color: #cbd5e1; }
+.copy-badge, .inline-copy {
+    cursor: copy;
+    font: inherit;
+}
+.copy-badge {
+    border-radius: 999px;
+}
+.inline-copy {
+    padding: 2px 6px;
+    color: #fef3c7;
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.32);
+    border-radius: 8px;
+}
 
 .params {
     margin-top: 12px;

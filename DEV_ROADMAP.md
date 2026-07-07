@@ -10,11 +10,6 @@
 | 文档 | 内容 |
 |---|---|
 | **DEV_ROADMAP.md**（本文件） | 开发路线、分阶段计划、验收标准、测试流程 |
-| **[DEV_REFERENCE.md](./DEV_REFERENCE.md)** | **关键模块完整可编译代码**（MainScheduler、CameraSetup、Spout JNA、StreamInstance 渲染循环、2 个 Mixin、全部 7 个运动模板、PlaybackEngine 等） |
-
-> 实现时请以 **DEV_REFERENCE.md** 中的代码为主要参考，DEV_ROADMAP.md 提供需求描述和阶段划分。
-
----
 
 ## 目录
 
