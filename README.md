@@ -87,6 +87,25 @@ http://localhost:23512
 - 世界连接状态提示
 - Clip ID 点击复制
 
+## 游戏内客户端命令
+
+进入世界或停留在客户端内时，可在聊天栏使用客户端命令快速调试 LiveHelper：
+
+| 命令 | 说明 |
+|---|---|
+| `/livehelper` | 显示总体状态，等同于 `/livehelper status` |
+| `/livehelper status` | 显示 Clip 数量、Manager 数量和当前活跃 Manager ID |
+| `/livehelper open` | 打开 Web UI：`http://localhost:23512/` |
+| `/livehelper reload` | 重新从 `config/livehelper/` 加载 JSON 配置 |
+| `/livehelper pose` | 显示当前玩家眼睛坐标、方块坐标、pitch/yaw |
+| `/livehelper list clips` | 列出所有 Clip 的 ID、名称、模板和时长 |
+| `/livehelper list managers` | 列出所有 Manager 的 ID、名称、时长和运行状态 |
+| `/livehelper start <managerId>` | 启动指定 Manager 推流 |
+| `/livehelper stop <managerId>` | 停止指定 Manager 推流 |
+| `/livehelper stop-all` | 停止所有活跃 Manager |
+
+这些命令直接调用客户端内的 `StorageManager` 和 `StreamManager`，不依赖浏览器或 curl，适合调试坐标、快速重载配置和控制 OBS Sender。
+
 ### 创建 Clip
 
 在 `Clips` 页面点击 `新建 Clip`，填写：
