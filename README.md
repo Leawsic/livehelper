@@ -96,6 +96,18 @@ http://localhost:23512
 - 模板
 - 模板参数
 
+Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想要取点的位置/视角，再点击对应按钮即可写入当前参数表单。
+
+| 按钮 | 会尝试写入的参数 | 适用场景 |
+|---|---|---|
+| `填入机位位置/朝向` | `posX/posY/posZ`、`rotX/rotY/rotZ` | `STATIC`、`PAN_TILT` 的相机位置，或任何有固定机位的模板 |
+| `填入目标点` | `targetX/targetY/targetZ`、`centerX/centerZ` | `ORBIT` 目标点，`PEDESTAL` 固定 X/Z |
+| `填入起点` | `fromX/fromY/fromZ`、`fromHeight`、`startPan/startTilt` | `DOLLY/TRUCK` 起点，`PEDESTAL` 起始高度，`PAN_TILT` 起始角度 |
+| `填入终点` | `toX/toY/toZ`、`toHeight`、`endPan/endTilt` | `DOLLY/TRUCK` 终点，`PEDESTAL` 结束高度，`PAN_TILT` 结束角度 |
+| `追加 PATH 关键帧` | 向 `keyframes` 追加当前 `x/y/z/rx/ry/rz` | `PATH` 多点路径采样 |
+
+这些按钮只会填充当前模板里实际存在的参数字段；不适用的字段会自动跳过。`PATH` 追加关键帧后会自动把所有关键帧的 `t` 均分到 `0..1`，便于连续站点采样。
+
 常用模板示例：
 
 #### STATIC

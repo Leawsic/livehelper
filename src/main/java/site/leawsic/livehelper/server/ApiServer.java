@@ -249,6 +249,13 @@ public final class ApiServer {
             pose.addProperty("x", mc.player.getX());
             pose.addProperty("y", mc.player.getEyeY());
             pose.addProperty("z", mc.player.getZ());
+            pose.addProperty("rotX", mc.player.getXRot());
+            pose.addProperty("rotY", mc.player.getYRot());
+            pose.addProperty("rotZ", 0f);
+            var blockPos = mc.player.blockPosition();
+            pose.addProperty("blockX", blockPos.getX());
+            pose.addProperty("blockY", blockPos.getY());
+            pose.addProperty("blockZ", blockPos.getZ());
             var q = AngleConvert.toQuaternion(mc.player.getXRot(), mc.player.getYRot(), 0f);
             pose.addProperty("qx", q.x);
             pose.addProperty("qy", q.y);

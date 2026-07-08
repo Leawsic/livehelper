@@ -218,12 +218,16 @@ function openClipEditor(clip = null) {
             <label>名称<input data-field="name" value="${escapeAttr(data.name)}" placeholder="例如 Orbit 主舞台"></label>
             <label>时长(ms)<input data-field="duration" type="number" min="1" value="${data.duration || 5000}"></label>
             <label class="full">模板<select data-field="template">${Object.keys(TEMPLATE_FIELDS).map(t => `<option ${t === data.template ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+            <div id="pose-tools" class="pose-tools full"></div>
             <div id="param-fields" class="full"></div>
         </div>
     `;
 
     const templateSelect = qs('[data-field="template"]');
-    const renderParams = () => renderParamFields(templateSelect.value, data.params || {});
+    const renderParams = () => {
+        renderPoseTools(templateSelect.value);
+        renderParamFields(templateSelect.value, data.params || {});
+    };
     templateSelect.addEventListener('change', renderParams);
     renderParams();
 
@@ -240,6 +244,28 @@ function openClipEditor(clip = null) {
         toast('Clip 已保存', 'good');
         await refreshAll();
     });
+}
+
+function renderPoseTools(template) {
+    const root = byId('pose-tools');
+    const pose = worldState.pose;
+    const current = pose ? `当前玩家：${formatNumber(pose.x)}, ${formatNumber(pose.y)}, ${formatNumber(pose.z)} | pitch ${formatNumber(pose.rotX || 0)}, yaw ${formatNumber(pose.rotY || 0)}` : '进入世界后可读取当前玩家坐标。';
+    const buttons = [
+        ['camera', '填入机位位置/朝向'],
+        ['target', '填入目标点'],
+        ['from', '填入起点'],
+        ['to', '填入终点'],
+        ['path', '追加 PATH 关键帧']
+    ];
+    root.innerHTML = `
+        <div class="tool-card">
+            <div><strong>玩家坐标辅助</strong><p class="help">${escapeHtml(current)}</p></div>
+            <div class="tool-row">
+                ${buttons.map(([action, label]) => `<button type="button" data-pose-action="${action}" ${pose ? '' : 'disabled'}>${label}</button>`).join('')}
+            </div>
+            <p class="help">当前模板：${escapeHtml(template)}。按钮会尽量填充当前模板存在的参数；不适用的字段会自动跳过。</p>
+        </div>
+    `;
 }
 
 function renderParamFields(template, params) {
@@ -351,6 +377,71 @@ function collectSlots() {
         transitionDuration: Number(row.querySelector('[data-slot-transition-duration]').value || 0),
         transitionEasing: row.querySelector('[data-slot-transition-easing]').value || 'linear'
     })).sort((a, b) => a.startOffset - b.startOffset);
+}
+
+async function applyPoseToParams(action) {
+    const pose = await API.getPose();
+    worldState = {ready: true, pose};
+    renderWorldStatus();
+
+    if (action === 'camera') {
+        setParam('posX', pose.x);
+        setParam('posY', pose.y);
+        setParam('posZ', pose.z);
+        setParam('rotX', pose.rotX);
+        setParam('rotY', pose.rotY);
+        setParam('rotZ', 0);
+    } else if (action === 'target') {
+        setParam('targetX', pose.x);
+        setParam('targetY', pose.y);
+        setParam('targetZ', pose.z);
+        setParam('centerX', pose.x);
+        setParam('centerZ', pose.z);
+    } else if (action === 'from') {
+        setParam('fromX', pose.x);
+        setParam('fromY', pose.y);
+        setParam('fromZ', pose.z);
+        setParam('fromHeight', pose.y);
+        setParam('startPan', pose.rotY);
+        setParam('startTilt', pose.rotX);
+    } else if (action === 'to') {
+        setParam('toX', pose.x);
+        setParam('toY', pose.y);
+        setParam('toZ', pose.z);
+        setParam('toHeight', pose.y);
+        setParam('endPan', pose.rotY);
+        setParam('endTilt', pose.rotX);
+    } else if (action === 'path') {
+        appendPathKeyframe(pose);
+    }
+    renderPoseTools(val('[data-field="template"]'));
+    toast('已应用当前玩家坐标', 'good');
+}
+
+function setParam(key, value) {
+    const input = qs(`[data-param="${key}"]`);
+    if (input) input.value = roundParam(value);
+}
+
+function appendPathKeyframe(pose) {
+    const input = qs('[data-param="keyframes"]');
+    if (!input) return;
+    let keyframes = [];
+    try {
+        keyframes = JSON.parse(input.value || '[]');
+        if (!Array.isArray(keyframes)) keyframes = [];
+    } catch (_) {
+        keyframes = [];
+    }
+    keyframes.push({t: 1, x: roundParam(pose.x), y: roundParam(pose.y), z: roundParam(pose.z), rx: roundParam(pose.rotX), ry: roundParam(pose.rotY), rz: 0});
+    keyframes.forEach((keyframe, index) => {
+        keyframe.t = keyframes.length === 1 ? 0 : roundParam(index / (keyframes.length - 1));
+    });
+    input.value = JSON.stringify(keyframes, null, 2);
+}
+
+function roundParam(value) {
+    return Math.round(Number(value) * 100) / 100;
 }
 
 function collectParams() {
@@ -467,6 +558,7 @@ document.addEventListener('click', async event => {
     try {
         if (target.id === 'refresh-overview') await refreshAll();
         if (target.dataset.copy) await copyText(target.dataset.copy);
+        if (target.dataset.poseAction) await applyPoseToParams(target.dataset.poseAction);
         if (target.id === 'new-clip') openClipEditor();
         if (target.id === 'new-manager') openManagerEditor();
         if (target.dataset.editClip) openClipEditor(clips.find(c => c.id === Number(target.dataset.editClip)));

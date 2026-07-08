@@ -12,7 +12,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.render.CameraSetup;
 import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.util.ActiveRenderContext;
@@ -78,12 +77,6 @@ public class GameRendererMixin {
             long now = System.nanoTime();
             if (now - livehelper$lastRedirectLogNs > 2_000_000_000L) {
                 livehelper$lastRedirectLogNs = now;
-                LiveHelper.LOGGER.info(
-                    "GameRenderer camera redirected: cmd=({}, {}, {}) camera=({}, {}, {}) rot=({}, {})",
-                    ctx.command().x(), ctx.command().y(), ctx.command().z(),
-                    camera.getPosition().x, camera.getPosition().y, camera.getPosition().z,
-                    camera.getYRot(), camera.getXRot()
-                );
             }
         }
     }
