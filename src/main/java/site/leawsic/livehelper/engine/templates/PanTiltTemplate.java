@@ -18,7 +18,8 @@ public class PanTiltTemplate implements MotionTemplate {
         return new FrameCommand(
             p(params, "posX", 0.0), p(params, "posY", 0.0), p(params, "posZ", 0.0),
             q.x, q.y, q.z, q.w,
-            pf(params, "fov", 70f)
+            pf(params, "fov", 70f),
+            tilt, pan, 0f
         );
     }
 }

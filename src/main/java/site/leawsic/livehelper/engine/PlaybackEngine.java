@@ -119,7 +119,10 @@ public class PlaybackEngine {
             qy,
             qz,
             qw,
-            lerp(from.fov(), to.fov(), amount)
+            lerp(from.fov(), to.fov(), amount),
+            from.hasEulerAngles() && to.hasEulerAngles() ? lerp(from.pitch(), to.pitch(), amount) : Float.NaN,
+            from.hasEulerAngles() && to.hasEulerAngles() ? lerp(from.yaw(), to.yaw(), amount) : Float.NaN,
+            from.hasEulerAngles() && to.hasEulerAngles() ? lerp(from.roll(), to.roll(), amount) : Float.NaN
         );
     }
 

@@ -13,11 +13,14 @@ public class PedestalTemplate implements MotionTemplate {
     public FrameCommand evaluate(Map<String, Object> params, float progress) {
         float eased = ease(progress, ps(params, "easing", "linear"));
         double y = lerp(p(params, "fromHeight", 0.0), p(params, "toHeight", 0.0), eased);
-        Quaternionf q = AngleConvert.toQuaternion(pf(params, "rotX", 0f), pf(params, "rotY", 0f), 0f);
+        float pitch = pf(params, "rotX", 0f);
+        float yaw = pf(params, "rotY", 0f);
+        Quaternionf q = AngleConvert.toQuaternion(pitch, yaw, 0f);
         return new FrameCommand(
             p(params, "centerX", 0.0), y, p(params, "centerZ", 0.0),
             q.x, q.y, q.z, q.w,
-            pf(params, "fov", 70f)
+            pf(params, "fov", 70f),
+            pitch, yaw, 0f
         );
     }
 }

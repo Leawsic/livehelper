@@ -38,7 +38,7 @@ public class PathTemplate implements MotionTemplate {
         if (keyframes.size() == 1) {
             Keyframe kf = keyframes.get(0);
             Quaternionf q = AngleConvert.toQuaternion(kf.rx, kf.ry, kf.rz);
-            return new FrameCommand(kf.x, kf.y, kf.z, q.x, q.y, q.z, q.w, fov);
+            return new FrameCommand(kf.x, kf.y, kf.z, q.x, q.y, q.z, q.w, fov, kf.rx, kf.ry, kf.rz);
         }
 
         progress = Math.max(0f, Math.min(0.9999f, progress));
@@ -64,6 +64,6 @@ public class PathTemplate implements MotionTemplate {
         float rz = lerp(a.rz, b.rz, eased);
 
         Quaternionf q = AngleConvert.toQuaternion(rx, ry, rz);
-        return new FrameCommand(x, y, z, q.x, q.y, q.z, q.w, fov);
+        return new FrameCommand(x, y, z, q.x, q.y, q.z, q.w, fov, rx, ry, rz);
     }
 }

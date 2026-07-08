@@ -25,7 +25,9 @@ public final class CameraSetup {
         CameraAccessor accessor = (CameraAccessor) camera;
         accessor.livehelper$setPosition(cmd.x(), cmd.y(), cmd.z());
 
-        Vector3f angles = AngleConvert.toEulerAngles(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
+        Vector3f angles = cmd.hasEulerAngles()
+            ? new Vector3f(cmd.pitch(), cmd.yaw(), cmd.roll())
+            : AngleConvert.toEulerAngles(new Quaternionf(cmd.qx(), cmd.qy(), cmd.qz(), cmd.qw()));
         accessor.livehelper$setRotation(angles.y, angles.x);
         accessor.livehelper$setInitialized(true);
 
