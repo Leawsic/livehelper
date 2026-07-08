@@ -7,8 +7,6 @@
         "CameraAccessor",
         "CameraMixin",
         "GameRendererAccessor",
-        "LevelRendererAccessor",
-        "LevelRendererMixin",
         "LightTextureAccessor",
         "MinecraftAccessor",
         "MinecraftMixin",
