@@ -15,18 +15,22 @@ const API = {
 
 const TEMPLATE_FIELDS = {
     STATIC: ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ', 'fov'],
+    STATIC_TRACK: ['posX', 'posY', 'posZ', 'entityId', 'entityUuid', 'entityName', 'targetYOffset', 'trackSpeed', 'fov'],
     ORBIT: ['targetX', 'targetY', 'targetZ', 'radius', 'speed', 'startAngle', 'elevation', 'fov'],
     DOLLY: ['fromX', 'fromY', 'fromZ', 'toX', 'toY', 'toZ', 'easing', 'fov'],
     TRUCK: ['fromX', 'fromY', 'fromZ', 'toX', 'toY', 'toZ', 'easing', 'fov'],
     PEDESTAL: ['fromHeight', 'toHeight', 'centerX', 'centerZ', 'easing', 'fov', 'rotX', 'rotY'],
     PAN_TILT: ['startPan', 'endPan', 'startTilt', 'endTilt', 'posX', 'posY', 'posZ', 'fov'],
-    PATH: ['keyframes', 'fov']
+    PATH: ['keyframes']
 };
+
+const STRING_FIELDS = new Set(['entityUuid', 'entityName']);
 
 const FIELD_LABELS = {
     posX: '位置 X', posY: '位置 Y', posZ: '位置 Z',
     rotX: '俯仰 Pitch', rotY: '偏航 Yaw', rotZ: '滚转 Roll',
     fov: '视场角 FOV',
+    entityId: '实体 ID', entityUuid: '实体 UUID', entityName: '实体名称', targetYOffset: '目标 Y 偏移', trackSpeed: '追踪平滑速度',
     targetX: '目标 X', targetY: '目标 Y', targetZ: '目标 Z',
     radius: '环绕半径', speed: '环绕速度', startAngle: '起始角度', elevation: '仰角',
     fromX: '起点 X', fromY: '起点 Y', fromZ: '起点 Z',
@@ -41,6 +45,9 @@ const FIELD_HELP = {
     posX: '摄像机所在的世界 X 坐标。', posY: '摄像机所在的世界 Y 坐标，通常用玩家眼睛高度。', posZ: '摄像机所在的世界 Z 坐标。',
     rotX: '上下看，正值向下，负值向上。', rotY: '水平朝向，使用 Minecraft yaw。', rotZ: '画面滚转角，一般保持 0。',
     fov: '镜头视场角，数值越大越广角。',
+    entityId: 'Minecraft 运行时实体 ID，优先级最高；可用 /livehelper entities 查看附近实体。', entityUuid: '实体 UUID，适合长期锁定同一个实体。',
+    entityName: '实体显示名称，entityId/UUID 为空或找不到时按名称精确匹配。', targetYOffset: '在实体眼睛高度基础上额外增加的 Y 偏移。', trackSpeed:
+    '镜头追踪实体的平滑速度。0 为即时锁定；数值越大越跟手，越小越丝滑但延迟越明显。推荐 5-25。',
     targetX: '环绕时始终看向的目标 X 坐标。', targetY: '环绕时始终看向的目标 Y 坐标。', targetZ: '环绕时始终看向的目标 Z 坐标。',
     radius: '摄像机到目标点的水平距离。', speed: 'Clip 播放期间绕目标旋转的圈数。', startAngle: '环绕起始角度，单位度。', elevation: '摄像机相对目标点的仰角，单位度。',
     fromX: '移动起点 X 坐标。', fromY: '移动起点 Y 坐标。', fromZ: '移动起点 Z 坐标。',
@@ -279,6 +286,9 @@ function renderParamFields(template, params) {
         }
         if (key === 'keyframes') {
             return renderPathEditor(value, params.fov ?? defaultParam('fov'), label, help);
+        }
+        if (STRING_FIELDS.has(key)) {
+            return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
         }
         return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" type="number" step="0.1" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
     }).join('');
@@ -526,7 +536,7 @@ function collectParams() {
     const params = {};
     document.querySelectorAll('[data-param]').forEach(input => {
         const key = input.dataset.param;
-        if (key === 'easing') params[key] = input.value;
+        if (key === 'easing' || STRING_FIELDS.has(key)) params[key] = input.value;
         else params[key] = Number(input.value);
     });
     if (qs('[data-path-editor]')) {
@@ -563,6 +573,8 @@ function showEditor(onSave) {
 
 function defaultParam(key) {
     if (key === 'fov') return 70;
+    if (key === 'trackSpeed') return 8;
+    if (STRING_FIELDS.has(key)) return '';
     if (key === 'speed') return 1;
     if (key === 'radius') return 10;
     if (key === 'easing') return 'linear';

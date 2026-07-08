@@ -9,6 +9,7 @@ public final class MotionTemplates {
 
     static {
         register("STATIC", new StaticTemplate());
+        register("STATIC_TRACK", new StaticTrackTemplate());
         register("ORBIT", new OrbitTemplate());
         register("DOLLY", new DollyTemplate());
         register("TRUCK", new TruckTemplate());

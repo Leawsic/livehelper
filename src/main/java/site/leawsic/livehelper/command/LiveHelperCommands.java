@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
 import site.leawsic.livehelper.model.Clip;
 import site.leawsic.livehelper.model.ClipSlot;
 import site.leawsic.livehelper.model.Manager;
@@ -30,6 +31,9 @@ public final class LiveHelperCommands {
             .then(literal("open").executes(context -> openWebUi(context.getSource())))
             .then(literal("reload").executes(context -> reloadStorage(context.getSource())))
             .then(literal("pose").executes(context -> showPose(context.getSource())))
+            .then(literal("entities").executes(context -> listEntities(context.getSource(), 32))
+                .then(argument("radius", IntegerArgumentType.integer(1, 256))
+                    .executes(context -> listEntities(context.getSource(), IntegerArgumentType.getInteger(context, "radius")))))
             .then(literal("list")
                 .then(literal("clips").executes(context -> listClips(context.getSource())))
                 .then(literal("managers").executes(context -> listManagers(context.getSource()))))
@@ -75,6 +79,32 @@ public final class LiveHelperCommands {
             block.getX(), block.getY(), block.getZ(),
             player.getXRot(), player.getYRot()));
         return 1;
+    }
+
+    private static int listEntities(FabricClientCommandSource source, int radius) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) {
+            send(source, "Player is not in a world.");
+            return 0;
+        }
+
+        int count = 0;
+        double maxDistanceSq = radius * radius;
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity == mc.player || entity.distanceToSqr(mc.player) > maxDistanceSq) continue;
+            send(source, String.format("#%d %s uuid=%s pos=%.1f %.1f %.1f",
+                entity.getId(), entity.getName().getString(), entity.getUUID(),
+                entity.getX(), entity.getY(), entity.getZ()));
+            count++;
+            if (count >= 20) {
+                send(source, "Showing first 20 entities. Use a smaller radius if needed.");
+                break;
+            }
+        }
+        if (count == 0) {
+            send(source, "No entities within " + radius + " blocks.");
+        }
+        return count;
     }
 
     private static int listClips(FabricClientCommandSource source) {

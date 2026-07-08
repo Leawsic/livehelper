@@ -12,6 +12,7 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
 - Clip/Manager JSON 持久化：`config/livehelper/`
 - 多种运镜模板：
   - `STATIC`
+  - `STATIC_TRACK`
   - `ORBIT`
   - `DOLLY`
   - `TRUCK`
@@ -98,6 +99,7 @@ http://localhost:23512
 | `/livehelper open` | 打开 Web UI：`http://localhost:23512/` |
 | `/livehelper reload` | 重新从 `config/livehelper/` 加载 JSON 配置 |
 | `/livehelper pose` | 显示当前玩家眼睛坐标、方块坐标、pitch/yaw |
+| `/livehelper entities [radius]` | 列出附近实体的运行时 ID、名称、UUID 和位置，默认半径 32 格 |
 | `/livehelper list clips` | 列出所有 Clip 的 ID、名称、模板和时长 |
 | `/livehelper list managers` | 列出所有 Manager 的 ID、名称、时长和运行状态 |
 | `/livehelper start <managerId>` | 启动指定 Manager 推流 |
@@ -137,6 +139,36 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
   "posY": 80,
   "posZ": 0,
   "rotX": 0,
+  "rotY": 0,
+  "rotZ": 0,
+  "fov": 70
+}
+```
+
+#### STATIC_TRACK
+
+固定机位，实时锁定一个实体。实体查找优先级为 `entityId`、`entityUuid`、`entityName`；找不到实体时回退到 `rotX/rotY/rotZ`。
+`trackSpeed` 控制追踪平滑速度：`0` 表示即时锁定，`4-12` 通常比较适合拍摄，数值越小越丝滑但跟随延迟越明显。
+
+可先在游戏内执行：
+
+```text
+/livehelper entities 64
+```
+
+然后把目标实体的 ID 填入 `entityId`。
+
+```json
+{
+  "posX": 8,
+  "posY": -50,
+  "posZ": -18,
+  "entityId": 123,
+  "entityUuid": "",
+  "entityName": "",
+  "targetYOffset": 0,
+  "trackSpeed": 8,
+  "rotX": 20,
   "rotY": 0,
   "rotZ": 0,
   "fov": 70
@@ -436,6 +468,7 @@ curl http://localhost:23512/api/managers/1/status
 观察 OBS 画面：
 
 - `STATIC`：相机位置、朝向和 FOV 全程固定，适合做稳定的全景、特写或转场前后停顿画面。
+- `STATIC_TRACK`：相机位置固定，但每帧重新看向目标实体眼睛位置；适合拍摄运动中的玩家、生物、载具或演出对象。
 - `ORBIT`：相机围绕 `targetX/targetY/targetZ` 做圆周运动，并持续看向目标点；`radius` 控制环绕距离，`speed` 控制 Clip 播放期间绕行圈数，`elevation` 控制仰角。
 - `DOLLY`：相机从 `fromX/fromY/fromZ` 移动到 `toX/toY/toZ`，朝向由移动方向决定；适合向前推进、后拉或斜向穿行镜头。
 - `TRUCK`：当前实现继承 `DOLLY`，参数和运动逻辑相同；约定上用于横向平移镜头，通常保持 `fromY/toY` 与 `fromZ/toZ` 接近，只改变 X 或横向坐标。
