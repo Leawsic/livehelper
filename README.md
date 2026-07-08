@@ -4,8 +4,6 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
 
 它允许用户通过本地 Web UI 创建镜头片段（Clip）和播放编排（Manager），在 Minecraft 客户端内按时间线渲染虚拟摄像机画面，并通过 Spout2 发送到 OBS Studio。
 
-> 当前实现包名以现有项目为准：`site.leawsic.livehelper`。
-
 ## 功能概览
 
 - Fabric 1.20.1 客户端 Mod
@@ -22,6 +20,7 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
   - `PATH`
 - 自定义主线程帧调度器 `MainScheduler`
 - 主摄像机接管式虚拟机位推流
+- Manager 时间线支持相邻 Clip 之间的摄像机转场
 - Spout2 DLL + JNA 发送主窗口 FBO 到 OBS
 - Stream 活跃时阻止失焦自动暂停，手动 ESC 暂停仍保留
 
@@ -150,14 +149,15 @@ http://localhost:23512
 - 输出高度
 - FPS
 - 渲染距离
-- Clips JSON
+- 时间线片段
+- 每个片段进入时的转场时长和缓动曲线
 
-`Clips JSON` 示例：
+时间线 JSON 示例：
 
 ```json
 [
-  {"clipId": 1, "startOffset": 0},
-  {"clipId": 2, "startOffset": 5000}
+  {"clipId": 1, "startOffset": 0, "transitionDuration": 0, "transitionEasing": "linear"},
+  {"clipId": 2, "startOffset": 5000, "transitionDuration": 1000, "transitionEasing": "easeInOut"}
 ]
 ```
 
@@ -165,6 +165,9 @@ http://localhost:23512
 
 - `clipId` 是已创建 Clip 的 ID
 - `startOffset` 是该 Clip 在 Manager 时间线中的开始时间，单位毫秒
+- `transitionDuration` 是进入该 Clip 时，从前一个 Clip 末帧混合到当前 Clip 的时间，单位毫秒
+- `transitionEasing` 支持 `linear`、`easeIn`、`easeOut`、`easeInOut`
+- 第一个 Clip 没有前一个 Clip，因此转场配置不会生效
 
 ## HTTP API
 
@@ -337,7 +340,7 @@ curl -X POST http://localhost:23512/api/clips ^
 
 ```json
 [
-  {"clipId": 1, "startOffset": 0}
+  {"clipId": 1, "startOffset": 0, "transitionDuration": 0, "transitionEasing": "linear"}
 ]
 ```
 
@@ -346,7 +349,7 @@ curl 示例：
 ```bash
 curl -X POST http://localhost:23512/api/managers ^
   -H "Content-Type: application/json" ^
-  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12}"
+  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0,\"transitionDuration\":0,\"transitionEasing\":\"linear\"}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12}"
 ```
 
 预期：
@@ -382,8 +385,8 @@ curl -X POST http://localhost:23512/api/managers/1/start
 - Minecraft 不崩溃
 - 日志显示 Manager 已启动
 - OBS 的 Spout2 Capture 中出现 `LiveHelper-Main Stream`
-- OBS 可看到 Minecraft 离屏摄像机画面
-- 摄像机画面应隐藏 GUI 和手部
+- OBS 可看到 Minecraft 虚拟摄像机画面
+- 当前实现会接管主摄像机，因此推流活跃时本机 Minecraft 视角也会跟随虚拟机位
 
 ### 10. 验证状态接口
 
@@ -401,10 +404,81 @@ curl http://localhost:23512/api/managers/1/status
 
 观察 OBS 画面：
 
-- ORBIT 模板应围绕目标点运动
-- STATIC 模板应保持固定画面
-- PATH 模板应按关键帧插值移动
-- PAN_TILT 模板应固定位置旋转
+- `STATIC`：相机位置、朝向和 FOV 全程固定，适合做稳定的全景、特写或转场前后停顿画面。
+- `ORBIT`：相机围绕 `targetX/targetY/targetZ` 做圆周运动，并持续看向目标点；`radius` 控制环绕距离，`speed` 控制 Clip 播放期间绕行圈数，`elevation` 控制仰角。
+- `DOLLY`：相机从 `fromX/fromY/fromZ` 移动到 `toX/toY/toZ`，朝向由移动方向决定；适合向前推进、后拉或斜向穿行镜头。
+- `TRUCK`：当前实现继承 `DOLLY`，参数和运动逻辑相同；约定上用于横向平移镜头，通常保持 `fromY/toY` 与 `fromZ/toZ` 接近，只改变 X 或横向坐标。
+- `PEDESTAL`：相机固定在 `centerX/centerZ`，从 `fromHeight` 升降到 `toHeight`，朝向由 `rotX/rotY` 固定；适合垂直升起、下降展示场景高度关系。
+- `PAN_TILT`：相机位置固定在 `posX/posY/posZ`，只在 `startPan/endPan` 和 `startTilt/endTilt` 之间旋转；适合扫视平台或从一侧转向另一侧。
+- `PATH`：相机按 `keyframes` 的 `t` 时间点在多段位置和旋转之间插值；适合复杂路径、绕行、抬升再落下等组合镜头。
+
+转场观察重点：
+
+- 进入某个 Clip 的前 `transitionDuration` 毫秒，会从上一个 Clip 的末帧混合到当前 Clip 的当前帧。
+- `linear` 速度恒定；`easeIn` 开始慢、后段快；`easeOut` 开始快、后段慢；`easeInOut` 两端慢、中间快。
+- 第一个 Clip 没有前一段，因此不会出现进入转场。
+- 当前转场是摄像机参数混合，不是画面淡入淡出；OBS 中应看到机位平滑移动/旋转/FOV 变化，而不是透明度变化。
+
+使用下方 `Platform Template Transition Test` 时，可按时间线逐段检查：
+
+| 时间范围 | Clip | 模板 | 预期画面 |
+|---:|---:|---|---|
+| `0-4000ms` | 101 | `STATIC` | 从平台北侧上方固定俯看，画面不应移动 |
+| `4000-11000ms` | 102 | `ORBIT` | 前 `1200ms` 从静态镜头平滑过渡，然后围绕平台中心半圈环绕 |
+| `11000-16000ms` | 103 | `DOLLY` | 前 `900ms` 缓入转场，然后从平台北侧向平台推进 |
+| `16000-21000ms` | 104 | `TRUCK` | 前 `900ms` 缓出转场，然后沿平台南侧横向穿过 |
+| `21000-26000ms` | 105 | `PEDESTAL` | 前 `1000ms` 匀速转场，然后在平台东北外侧垂直升起 |
+| `26000-31000ms` | 106 | `PAN_TILT` | 前 `1200ms` 平滑转场，然后固定位置左右摇摄并略微俯仰 |
+| `31000-38000ms` | 107 | `PATH` | 前 `1500ms` 平滑转场，然后沿关键帧绕平台移动 |
+
+### 11.1 使用内置模板 + 转场测试配置
+
+仓库已提供一套模板测试配置：
+
+```text
+examples/livehelper/clips.json
+examples/livehelper/managers.json
+```
+
+测试区域假设是一个小平台：
+
+```text
+from -8 -61 -8 to 24 -61 24
+```
+
+样例相机围绕平台中心 `(8, -61, 8)` 布置，主要使用 `y=-58..-45` 的观察高度。
+
+测试 Manager：
+
+| ID | 名称 | 总时长 | Sender |
+|---:|---|---:|---|
+| 201 | `Platform Template Transition Test` | 38000ms | `LiveHelper-Platform Template Transition Test` |
+
+该 Manager 会按顺序播放所有模板，并测试这些转场：
+
+| 进入 Clip | 转场时长 | 缓动 |
+|---:|---:|---|
+| 101 | 0ms | `linear` |
+| 102 | 1200ms | `easeInOut` |
+| 103 | 900ms | `easeIn` |
+| 104 | 900ms | `easeOut` |
+| 105 | 1000ms | `linear` |
+| 106 | 1200ms | `easeInOut` |
+| 107 | 1500ms | `easeInOut` |
+
+使用方式：
+
+1. 执行 `./gradlew runClient`
+2. 进入包含 `-8 -61 -8` 到 `24 -61 24` 平台的测试世界
+3. 打开 `http://localhost:23512`
+4. 在 Managers 页面启动 `Platform Template Transition Test`
+5. OBS 添加 Spout2 Capture 并选择 `LiveHelper-Platform Template Transition Test`
+
+如果正式游戏实例需要同一套配置，可把这两个 JSON 复制到：
+
+```text
+.minecraft/config/livehelper/
+```
 
 ### 12. 停止 Manager
 
@@ -419,42 +493,10 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 预期：
 
 - 状态变为 `stopped`
-- 资源释放，无持续报错
+- 资源释放
 - OBS 画面停止更新或 Sender 消失
 
-### 13. 验证持久化
-
-1. 创建 Clip 和 Manager
-2. 关闭 Minecraft
-3. 重新执行：
-
-```bash
-./gradlew runClient
-```
-
-4. 打开：
-
-```text
-http://localhost:23512
-```
-
-预期：
-
-- 之前创建的 Clip 和 Manager 仍然存在
-- 数据文件位于：
-
-```text
-.minecraft/config/livehelper/clips.json
-.minecraft/config/livehelper/managers.json
-```
-
-开发运行目录通常是：
-
-```text
-run/config/livehelper/
-```
-
-### 14. 双机位验证（可选）
+### 13. 双机位验证（可选）
 
 1. 创建第二个 Clip 和 Manager
 2. 启动两个 Manager
@@ -470,23 +512,6 @@ LiveHelper-<Manager B Name>
 ```
 
 - 两个画面独立更新
-
-## 当前已完成的自动验证
-
-本仓库当前已经完成：
-
-```bash
-./gradlew build
-```
-
-并确认：
-
-- Java 编译通过
-- Mixin 配置参与构建
-- `livehelper.accesswidener` 打包进 jar
-- `libSpoutBinding.dll` 打包进 jar
-- Web UI 静态文件打包进 jar
-- JNA jar 被 include 到 `META-INF/jars/`
 
 ## 注意事项
 

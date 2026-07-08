@@ -1,0 +1,54 @@
+[
+  {
+    "id": 201,
+    "name": "Platform Template Transition Test",
+    "clips": [
+      {
+        "clipId": 101,
+        "startOffset": 0,
+        "transitionDuration": 0,
+        "transitionEasing": "linear"
+      },
+      {
+        "clipId": 102,
+        "startOffset": 4000,
+        "transitionDuration": 1200,
+        "transitionEasing": "easeInOut"
+      },
+      {
+        "clipId": 103,
+        "startOffset": 11000,
+        "transitionDuration": 900,
+        "transitionEasing": "easeIn"
+      },
+      {
+        "clipId": 104,
+        "startOffset": 16000,
+        "transitionDuration": 900,
+        "transitionEasing": "easeOut"
+      },
+      {
+        "clipId": 105,
+        "startOffset": 21000,
+        "transitionDuration": 1000,
+        "transitionEasing": "linear"
+      },
+      {
+        "clipId": 106,
+        "startOffset": 26000,
+        "transitionDuration": 1200,
+        "transitionEasing": "easeInOut"
+      },
+      {
+        "clipId": 107,
+        "startOffset": 31000,
+        "transitionDuration": 1500,
+        "transitionEasing": "easeInOut"
+      }
+    ],
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "renderDistance": 12
+  }
+]
