@@ -17,7 +17,7 @@ public class PathTemplate implements MotionTemplate {
     private static final Gson GSON = new Gson();
     private static final Type KEYFRAME_LIST_TYPE = new TypeToken<List<Keyframe>>() {}.getType();
 
-    public record Keyframe(float t, double x, double y, double z, float rx, float ry, float rz) {}
+    public record Keyframe(float t, double x, double y, double z, float rx, float ry, float rz, Float fov) {}
 
     @Override
     public FrameCommand evaluate(Map<String, Object> params, float progress) {
@@ -37,8 +37,9 @@ public class PathTemplate implements MotionTemplate {
         }
         if (keyframes.size() == 1) {
             Keyframe kf = keyframes.get(0);
+            float frameFov = kf.fov == null ? fov : kf.fov;
             Quaternionf q = AngleConvert.toQuaternion(kf.rx, kf.ry, kf.rz);
-            return new FrameCommand(kf.x, kf.y, kf.z, q.x, q.y, q.z, q.w, fov, kf.rx, kf.ry, kf.rz);
+            return new FrameCommand(kf.x, kf.y, kf.z, q.x, q.y, q.z, q.w, frameFov, kf.rx, kf.ry, kf.rz);
         }
 
         progress = Math.max(0f, Math.min(0.9999f, progress));
@@ -62,8 +63,9 @@ public class PathTemplate implements MotionTemplate {
         float rx = lerp(a.rx, b.rx, eased);
         float ry = lerp(a.ry, b.ry, eased);
         float rz = lerp(a.rz, b.rz, eased);
+        float frameFov = lerp(a.fov == null ? fov : a.fov, b.fov == null ? fov : b.fov, eased);
 
         Quaternionf q = AngleConvert.toQuaternion(rx, ry, rz);
-        return new FrameCommand(x, y, z, q.x, q.y, q.z, q.w, fov, rx, ry, rz);
+        return new FrameCommand(x, y, z, q.x, q.y, q.z, q.w, frameFov, rx, ry, rz);
     }
 }

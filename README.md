@@ -123,9 +123,9 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
 | `填入目标点` | `targetX/targetY/targetZ`、`centerX/centerZ` | `ORBIT` 目标点，`PEDESTAL` 固定 X/Z |
 | `填入起点` | `fromX/fromY/fromZ`、`fromHeight`、`startPan/startTilt` | `DOLLY/TRUCK` 起点，`PEDESTAL` 起始高度，`PAN_TILT` 起始角度 |
 | `填入终点` | `toX/toY/toZ`、`toHeight`、`endPan/endTilt` | `DOLLY/TRUCK` 终点，`PEDESTAL` 结束高度，`PAN_TILT` 结束角度 |
-| `追加 PATH 关键帧` | 向 `keyframes` 追加当前 `x/y/z/rx/ry/rz` | `PATH` 多点路径采样 |
+| `追加 PATH 关键帧` | 向 `keyframes` 追加当前 `x/y/z/rx/ry/rz/fov` | `PATH` 多点路径采样 |
 
-这些按钮只会填充当前模板里实际存在的参数字段；不适用的字段会自动跳过。`PATH` 追加关键帧后会自动把所有关键帧的 `t` 均分到 `0..1`，便于连续站点采样。
+这些按钮只会填充当前模板里实际存在的参数字段；不适用的字段会自动跳过。`PATH` 追加关键帧后会自动把所有关键帧的 `t` 均分到 `0..1`，便于连续站点采样。PATH 编辑器支持逐点设置 `fov`，可在移动时同步拉近/拉远镜头，制作类似希区柯克变焦的效果。
 
 常用模板示例：
 
@@ -164,9 +164,9 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
 {
   "fov": 70,
   "keyframes": [
-    {"t": 0.0, "x": 0,  "y": 80, "z": 0,  "rx": 0, "ry": 0,  "rz": 0},
-    {"t": 0.5, "x": 10, "y": 82, "z": 10, "rx": 0, "ry": 90, "rz": 0},
-    {"t": 1.0, "x": 0,  "y": 80, "z": 20, "rx": 0, "ry": 180,"rz": 0}
+    {"t": 0.0, "x": 0,  "y": 80, "z": 0,  "rx": 0, "ry": 0,  "rz": 0, "fov": 75},
+    {"t": 0.5, "x": 10, "y": 82, "z": 10, "rx": 0, "ry": 90, "rz": 0, "fov": 45},
+    {"t": 1.0, "x": 0,  "y": 80, "z": 20, "rx": 0, "ry": 180,"rz": 0, "fov": 75}
   ]
 }
 ```

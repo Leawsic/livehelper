@@ -216,6 +216,31 @@ textarea { min-height: 110px; resize: vertical; }
 .tool-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .tool-row button { padding: 7px 10px; font-size: 12px; }
 
+.path-editor {
+    margin: 12px 0;
+    padding: 12px;
+    background: rgba(2, 6, 23, 0.34);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+}
+.path-head, .path-row {
+    display: grid;
+    grid-template-columns: 70px repeat(7, minmax(72px, 1fr)) 150px;
+    gap: 8px;
+    align-items: center;
+}
+.path-head {
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.path-row { margin-top: 8px; }
+.path-row input { margin-top: 0; padding: 8px; }
+.path-actions { display: flex; gap: 5px; }
+.path-actions button { padding: 7px 8px; font-size: 12px; }
+
 .timeline-builder {
     margin-top: 16px;
     padding: 14px;

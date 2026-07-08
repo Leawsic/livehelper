@@ -48,7 +48,7 @@ const FIELD_HELP = {
     easing: '控制运动速度曲线。',
     fromHeight: '升降镜头起始 Y 高度。', toHeight: '升降镜头结束 Y 高度。', centerX: '升降镜头固定 X 坐标。', centerZ: '升降镜头固定 Z 坐标。',
     startPan: '水平旋转起始角度。', endPan: '水平旋转结束角度。', startTilt: '俯仰起始角度。', endTilt: '俯仰结束角度。',
-    keyframes: '数组 JSON。每个关键帧包含 t、x、y、z、rx、ry、rz。t 范围为 0 到 1。'
+    keyframes: '路径点列表。每个点包含 t、x、y、z、rx、ry、rz、fov。t 范围为 0 到 1。'
 };
 
 let clips = [];
@@ -278,11 +278,41 @@ function renderParamFields(template, params) {
             return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><select data-param="${key}">${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(v => `<option ${v === value ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="help">${escapeHtml(help)}</span></label>`;
         }
         if (key === 'keyframes') {
-            const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-            return `<label class="full" title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><textarea data-param="${key}" rows="8">${escapeHtml(text)}</textarea><span class="help">${escapeHtml(help)}</span></label>`;
+            return renderPathEditor(value, params.fov ?? defaultParam('fov'), label, help);
         }
         return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" type="number" step="0.1" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
     }).join('');
+}
+
+function renderPathEditor(value, fallbackFov, label, help) {
+    const keyframes = normalizePathKeyframes(value, fallbackFov);
+    return `
+        <div class="path-editor full" data-path-editor title="${escapeAttr(help)}">
+            <div class="field-title"><span>${escapeHtml(label)}</span><small>keyframes</small></div>
+            <div class="path-head">
+                <span>t</span><span>x</span><span>y</span><span>z</span><span>rx</span><span>ry</span><span>rz</span><span>fov</span><span></span>
+            </div>
+            <div data-path-rows>${renderPathRows(keyframes)}</div>
+            <div class="tool-row">
+                <button type="button" data-path-add>添加路径点</button>
+                <button type="button" data-path-even>均分 t</button>
+            </div>
+            <p class="help">${escapeHtml(help)}。“追加 PATH 关键帧”会把玩家当前坐标、视角和当前 FOV 写入新路径点。</p>
+        </div>
+    `;
+}
+
+function renderPathRows(keyframes) {
+    return keyframes.map((frame, index) => `
+        <div class="path-row" data-path-index="${index}">
+            ${['t', 'x', 'y', 'z', 'rx', 'ry', 'rz', 'fov'].map(field => `<input data-path-field="${field}" type="number" step="0.01" value="${escapeAttr(frame[field] ?? 0)}">`).join('')}
+            <div class="path-actions">
+                <button type="button" data-path-up="${index}">↑</button>
+                <button type="button" data-path-down="${index}">↓</button>
+                <button type="button" class="danger" data-path-remove="${index}">删除</button>
+            </div>
+        </div>
+    `).join('');
 }
 
 function openManagerEditor(manager = null) {
@@ -379,6 +409,55 @@ function collectSlots() {
     })).sort((a, b) => a.startOffset - b.startOffset);
 }
 
+function collectPathKeyframes() {
+    return [...document.querySelectorAll('.path-row')].map(row => ({
+        t: Number(row.querySelector('[data-path-field="t"]').value || 0),
+        x: Number(row.querySelector('[data-path-field="x"]').value || 0),
+        y: Number(row.querySelector('[data-path-field="y"]').value || 0),
+        z: Number(row.querySelector('[data-path-field="z"]').value || 0),
+        rx: Number(row.querySelector('[data-path-field="rx"]').value || 0),
+        ry: Number(row.querySelector('[data-path-field="ry"]').value || 0),
+        rz: Number(row.querySelector('[data-path-field="rz"]').value || 0),
+        fov: Number(row.querySelector('[data-path-field="fov"]').value || 70)
+    })).sort((a, b) => a.t - b.t);
+}
+
+function normalizePathKeyframes(value, fallbackFov = 70) {
+    let keyframes = value;
+    if (typeof keyframes === 'string') {
+        try {
+            keyframes = JSON.parse(keyframes || '[]');
+        } catch (_) {
+            keyframes = [];
+        }
+    }
+    if (!Array.isArray(keyframes) || !keyframes.length) {
+        keyframes = defaultParam('keyframes');
+    }
+    return keyframes.map(frame => ({
+        t: roundParam(frame.t ?? 0),
+        x: roundParam(frame.x ?? 0),
+        y: roundParam(frame.y ?? 0),
+        z: roundParam(frame.z ?? 0),
+        rx: roundParam(frame.rx ?? 0),
+        ry: roundParam(frame.ry ?? 0),
+        rz: roundParam(frame.rz ?? 0),
+        fov: roundParam(frame.fov ?? fallbackFov)
+    })).sort((a, b) => a.t - b.t);
+}
+
+function renderPathRowsFromData(keyframes) {
+    const rows = qs('[data-path-rows]');
+    if (rows) rows.innerHTML = renderPathRows(keyframes);
+}
+
+function evenPathTimes(keyframes) {
+    keyframes.forEach((frame, index) => {
+        frame.t = keyframes.length === 1 ? 0 : roundParam(index / (keyframes.length - 1));
+    });
+    return keyframes;
+}
+
 async function applyPoseToParams(action) {
     const pose = await API.getPose();
     worldState = {ready: true, pose};
@@ -424,20 +503,19 @@ function setParam(key, value) {
 }
 
 function appendPathKeyframe(pose) {
-    const input = qs('[data-param="keyframes"]');
-    if (!input) return;
-    let keyframes = [];
-    try {
-        keyframes = JSON.parse(input.value || '[]');
-        if (!Array.isArray(keyframes)) keyframes = [];
-    } catch (_) {
-        keyframes = [];
-    }
-    keyframes.push({t: 1, x: roundParam(pose.x), y: roundParam(pose.y), z: roundParam(pose.z), rx: roundParam(pose.rotX), ry: roundParam(pose.rotY), rz: 0});
-    keyframes.forEach((keyframe, index) => {
-        keyframe.t = keyframes.length === 1 ? 0 : roundParam(index / (keyframes.length - 1));
+    if (!qs('[data-path-editor]')) return;
+    const keyframes = collectPathKeyframes();
+    keyframes.push({
+        t: 1,
+        x: roundParam(pose.x),
+        y: roundParam(pose.y),
+        z: roundParam(pose.z),
+        rx: roundParam(pose.rotX),
+        ry: roundParam(pose.rotY),
+        rz: 0,
+        fov: Number(qs('[data-param="fov"]')?.value || 70)
     });
-    input.value = JSON.stringify(keyframes, null, 2);
+    renderPathRowsFromData(evenPathTimes(keyframes));
 }
 
 function roundParam(value) {
@@ -448,10 +526,12 @@ function collectParams() {
     const params = {};
     document.querySelectorAll('[data-param]').forEach(input => {
         const key = input.dataset.param;
-        if (key === 'keyframes') params[key] = JSON.parse(input.value || '[]');
-        else if (key === 'easing') params[key] = input.value;
+        if (key === 'easing') params[key] = input.value;
         else params[key] = Number(input.value);
     });
+    if (qs('[data-path-editor]')) {
+        params.keyframes = collectPathKeyframes();
+    }
     return params;
 }
 
@@ -486,7 +566,10 @@ function defaultParam(key) {
     if (key === 'speed') return 1;
     if (key === 'radius') return 10;
     if (key === 'easing') return 'linear';
-    if (key === 'keyframes') return [{t: 0, x: 0, y: 80, z: 0, rx: 0, ry: 0, rz: 0}, {t: 1, x: 10, y: 80, z: 10, rx: 0, ry: 90, rz: 0}];
+    if (key === 'keyframes') return [
+        {t: 0, x: 0, y: 80, z: 0, rx: 0, ry: 0, rz: 0, fov: 70},
+        {t: 1, x: 10, y: 80, z: 10, rx: 0, ry: 90, rz: 0, fov: 55}
+    ];
     return 0;
 }
 
@@ -556,6 +639,30 @@ document.addEventListener('visibilitychange', () => {
 document.addEventListener('click', async event => {
     const target = event.target;
     try {
+        if (target.dataset.pathAdd !== undefined) {
+            const keyframes = collectPathKeyframes();
+            const last = keyframes.at(-1) || {x: 0, y: 80, z: 0, rx: 0, ry: 0, rz: 0, fov: 70};
+            keyframes.push({...last, t: 1});
+            renderPathRowsFromData(evenPathTimes(keyframes));
+        }
+        if (target.dataset.pathEven !== undefined) {
+            renderPathRowsFromData(evenPathTimes(collectPathKeyframes()));
+        }
+        if (target.dataset.pathRemove !== undefined) {
+            const keyframes = collectPathKeyframes();
+            keyframes.splice(Number(target.dataset.pathRemove), 1);
+            renderPathRowsFromData(evenPathTimes(keyframes));
+        }
+        if (target.dataset.pathUp !== undefined || target.dataset.pathDown !== undefined) {
+            const keyframes = collectPathKeyframes();
+            const from = Number(target.dataset.pathUp ?? target.dataset.pathDown);
+            const to = from + (target.dataset.pathUp !== undefined ? -1 : 1);
+            if (to >= 0 && to < keyframes.length) {
+                const [frame] = keyframes.splice(from, 1);
+                keyframes.splice(to, 0, frame);
+                renderPathRowsFromData(evenPathTimes(keyframes));
+            }
+        }
         if (target.id === 'refresh-overview') await refreshAll();
         if (target.dataset.copy) await copyText(target.dataset.copy);
         if (target.dataset.poseAction) await applyPoseToParams(target.dataset.poseAction);
