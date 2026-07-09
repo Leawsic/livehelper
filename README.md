@@ -206,6 +206,8 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
 - 输出高度
 - FPS
 - 渲染距离
+- Loop：时间线播放到末尾后从头循环
+- Locked：启动其它 Manager 时不自动停止当前 Manager
 - 时间线片段
 - 每个片段进入时的转场时长和缓动曲线
 
@@ -225,6 +227,12 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
 - `transitionDuration` 是进入该 Clip 时，从前一个 Clip 末帧混合到当前 Clip 的时间，单位毫秒
 - `transitionEasing` 支持 `linear`、`easeIn`、`easeOut`、`easeInOut`
 - 第一个 Clip 没有前一个 Clip，因此转场配置不会生效
+
+Manager 级别字段：
+
+- `loop` 为 `true` 时，时间线播放到总时长后会从头继续播放；默认为 `false`
+- `locked` 为 `true` 时，启动其它 Manager 不会自动停止它；默认为 `false`
+- 启动一个新的未 locked Manager 时，会自动停止其它未 locked 的活跃 Manager，便于保持单主机位推流
 
 ## HTTP API
 
@@ -393,6 +401,8 @@ curl -X POST http://localhost:23512/api/clips ^
 - height: `720`
 - fps: `30`
 - renderDistance: `12`
+- loop: `true`
+- locked: `false`
 - clips:
 
 ```json
@@ -406,7 +416,7 @@ curl 示例：
 ```bash
 curl -X POST http://localhost:23512/api/managers ^
   -H "Content-Type: application/json" ^
-  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0,\"transitionDuration\":0,\"transitionEasing\":\"linear\"}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12}"
+  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0,\"transitionDuration\":0,\"transitionEasing\":\"linear\"}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12,\"loop\":true,\"locked\":false}"
 ```
 
 预期：
@@ -496,8 +506,9 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 ### 13. 双机位验证（可选）
 
 1. 创建第二个 Clip 和 Manager
-2. 启动两个 Manager
-3. OBS 添加两个 Spout2 Capture 源
+2. 将需要并行保留的 Manager 设置为 `locked: true`
+3. 启动两个 Manager
+4. OBS 添加两个 Spout2 Capture 源
 
 预期：
 
@@ -509,6 +520,7 @@ LiveHelper-<Manager B Name>
 ```
 
 - 两个画面独立更新
+- 未设置 `locked` 的旧 Manager 会在新 Manager 启动时自动停止
 
 ## 注意事项
 
