@@ -233,6 +233,7 @@ Manager 级别字段：
 - `loop` 为 `true` 时，时间线播放到总时长后会从头继续播放；默认为 `false`
 - `locked` 为 `true` 时，启动其它 Manager 不会自动停止它；默认为 `false`
 - 启动一个新的未 locked Manager 时，会自动停止其它未 locked 的活跃 Manager，便于保持单主机位推流
+- 为避免快速切换时 OBS 短暂黑屏，旧 Manager 会先暂停调度并保留上一帧输出，直到新 Manager 首帧发送成功后再释放旧 Spout sender
 
 ## HTTP API
 

@@ -9,6 +9,7 @@ import site.leawsic.livehelper.storage.StorageManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -57,29 +58,31 @@ public enum StreamManager {
         if (manager == null) {
             throw new IllegalArgumentException("Manager not found: " + managerId);
         }
-        stopUnlockedStreamsExcept(managerId);
+        List<StreamInstance> predecessors = suspendUnlockedStreamsExcept(managerId);
         Map<Integer, Clip> clipCache = new HashMap<>();
         for (var slot : manager.clips()) {
             Clip clip = StorageManager.getInstance().getClip(slot.clipId());
             if (clip != null) clipCache.put(slot.clipId(), clip);
         }
         PlaybackEngine engine = new PlaybackEngine(manager, clipCache);
-        StreamInstance instance = new StreamInstance(managerId, manager, engine);
+        StreamInstance instance = new StreamInstance(managerId, manager, engine, predecessors);
         activeStreams.put(managerId, instance);
         LiveHelper.LOGGER.info("Started stream for manager: {}", manager.name());
     }
 
-    private void stopUnlockedStreamsExcept(int managerId) {
+    private List<StreamInstance> suspendUnlockedStreamsExcept(int managerId) {
+        List<StreamInstance> suspended = new ArrayList<>();
         for (int activeId : new ArrayList<>(activeStreams.keySet())) {
             if (activeId == managerId) continue;
             Manager activeManager = StorageManager.getInstance().getManager(activeId);
             if (activeManager != null && activeManager.locked()) continue;
             StreamInstance instance = activeStreams.remove(activeId);
-            if (instance != null) {
-                instance.close();
-                LiveHelper.LOGGER.info("Stopped unlocked manager {} before starting {}", activeId, managerId);
-            }
+            if (instance == null) continue;
+            instance.suspend();
+            suspended.add(instance);
+            LiveHelper.LOGGER.info("Suspended unlocked manager {} before starting {}", activeId, managerId);
         }
+        return suspended;
     }
 
     public void stop(int managerId) {

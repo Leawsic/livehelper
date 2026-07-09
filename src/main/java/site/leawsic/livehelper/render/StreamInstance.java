@@ -11,6 +11,7 @@ import site.leawsic.livehelper.scheduler.MainScheduler;
 import site.leawsic.livehelper.spout.SpoutSender;
 import site.leawsic.livehelper.util.ActiveRenderContext;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class StreamInstance implements AutoCloseable {
@@ -22,16 +23,31 @@ public class StreamInstance implements AutoCloseable {
     private final long frameIntervalNs;
 
     private boolean stopped;
+    private boolean firstFrameSent;
+    private List<StreamInstance> predecessors;
 
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
+        this(managerId, manager, engine, List.of());
+    }
+
+    public StreamInstance(int managerId, Manager manager, PlaybackEngine engine, List<StreamInstance> predecessors) {
         this.managerId = managerId;
         this.config = manager;
         this.engine = engine;
         this.dummyCamera = new Camera();
         this.frameIntervalNs = TimeUnit.SECONDS.toNanos(1) / Math.max(1, manager.fps());
         this.spoutSender = new SpoutSender("LiveHelper-" + manager.name());
+        this.predecessors = predecessors;
 
         scheduleNext(System.nanoTime());
+    }
+
+    /**
+     * 挂起实例：停止后续帧调度，但保留 persistent context 和 Spout sender，
+     * 直至接管它的后继实例完成首帧发送。用于切换 Manager 时避免黑屏。
+     */
+    public void suspend() {
+        stopped = true;
     }
 
     private void scheduleNext(long currentNs) {
@@ -61,6 +77,13 @@ public class StreamInstance implements AutoCloseable {
 
             RenderTarget mainTarget = mc.getMainRenderTarget();
             spoutSender.send(mainTarget.frameBufferId, mainTarget.width, mainTarget.height);
+            if (!firstFrameSent) {
+                firstFrameSent = true;
+                if (predecessors != null && !predecessors.isEmpty()) {
+                    for (StreamInstance p : predecessors) p.closeAfterHandoff();
+                    predecessors = null;
+                }
+            }
         } catch (Exception e) {
             LiveHelper.LOGGER.error("Error rendering stream {}", managerId, e);
         }
@@ -70,10 +93,23 @@ public class StreamInstance implements AutoCloseable {
         dummyCamera.tick();
     }
 
+    private void closeAfterHandoff() {
+        stopped = true;
+        spoutSender.close();
+        if (predecessors != null) {
+            for (StreamInstance p : predecessors) p.closeAfterHandoff();
+            predecessors = null;
+        }
+    }
+
     @Override
     public void close() {
         stopped = true;
         ActiveRenderContext.clearPersistent();
         spoutSender.close();
+        if (predecessors != null) {
+            for (StreamInstance p : predecessors) p.close();
+            predecessors = null;
+        }
     }
 }
