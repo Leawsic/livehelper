@@ -8,8 +8,6 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(Minecraft.class)
 public interface MinecraftAccessor {
-    @Accessor("mainRenderTarget")
-    RenderTarget livehelper$getMainRenderTarget();
 
     @Accessor("mainRenderTarget")
     void livehelper$setMainRenderTarget(RenderTarget target);

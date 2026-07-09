@@ -1,7 +1,6 @@
 package site.leawsic.livehelper.render;
 
 import net.minecraft.client.Camera;
-import net.minecraft.client.Minecraft;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import site.leawsic.livehelper.mixin.CameraAccessor;
@@ -12,14 +11,6 @@ public final class CameraSetup {
     private CameraSetup() {}
 
     private static long lastDebugLogNs = 0L;
-
-    public static void apply(Camera camera, FrameCommand cmd, int width, int height, int renderDistance) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null) return;
-
-        camera.setup(mc.level, mc.player, false, false, 1.0F);
-        applyAfterSetup(camera, cmd);
-    }
 
     public static void applyAfterSetup(Camera camera, FrameCommand cmd) {
         CameraAccessor accessor = (CameraAccessor) camera;

@@ -6,8 +6,6 @@
     "client": [
         "CameraAccessor",
         "CameraMixin",
-        "GameRendererAccessor",
-        "LightTextureAccessor",
         "MinecraftAccessor",
         "MinecraftMixin",
         "GameRendererMixin"

@@ -7,10 +7,6 @@ public final class OffscreenTargetTracker {
 
     private static RenderTarget originalTarget = null;
 
-    public static void setOriginalTarget(RenderTarget target) {
-        originalTarget = target;
-    }
-
     public static RenderTarget getOriginalTarget() {
         return originalTarget;
     }

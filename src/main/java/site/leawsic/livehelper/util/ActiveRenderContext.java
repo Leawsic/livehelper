@@ -9,22 +9,6 @@ public final class ActiveRenderContext {
 
     private ActiveRenderContext() {}
 
-    public static void runWithContext(FrameCommand command, int width, int height, int renderDistance, Runnable action) {
-        Context context = new Context(command, width, height, renderDistance);
-        ACTIVE.set(context);
-        fallbackActive = context;
-        try {
-            action.run();
-        } finally {
-            ACTIVE.remove();
-            fallbackActive = null;
-        }
-    }
-
-    public static boolean isActive() {
-        return current() != null;
-    }
-
     public static boolean isOffscreenActive() {
         return ACTIVE.get() != null || fallbackActive != null;
     }

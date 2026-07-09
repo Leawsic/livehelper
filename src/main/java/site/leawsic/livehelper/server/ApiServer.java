@@ -48,13 +48,6 @@ public final class ApiServer {
         LiveHelper.LOGGER.info("API server started on port {}", PORT);
     }
 
-    public static void stop() {
-        if (server != null) {
-            server.stop(0);
-            server = null;
-        }
-    }
-
     private static void sendJson(HttpExchange exchange, int code, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
