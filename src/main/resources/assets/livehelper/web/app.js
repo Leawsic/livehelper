@@ -706,6 +706,10 @@ document.addEventListener('click', async event => {
             await refreshAll();
         }
         if (target.dataset.startManager) {
+            if (!worldState.ready) {
+                toast('玩家尚未进入世界，无法启动推流', 'bad');
+                return;
+            }
             await API.startManager(Number(target.dataset.startManager));
             toast('启动请求已发送', 'good');
             await refreshAll();
