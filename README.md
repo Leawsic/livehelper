@@ -52,12 +52,6 @@ build/libs/livehelper-1.0.0.jar
 build/libs/livehelper-1.0.0-sources.jar
 ```
 
-已验证当前代码可通过：
-
-```text
-BUILD SUCCESSFUL
-```
-
 ## 运行开发客户端
 
 ```bash
@@ -482,67 +476,6 @@ curl http://localhost:23512/api/managers/1/status
 - `linear` 速度恒定；`easeIn` 开始慢、后段快；`easeOut` 开始快、后段慢；`easeInOut` 两端慢、中间快。
 - 第一个 Clip 没有前一段，因此不会出现进入转场。
 - 当前转场是摄像机参数混合，不是画面淡入淡出；OBS 中应看到机位平滑移动/旋转/FOV 变化，而不是透明度变化。
-
-使用下方 `Platform Template Transition Test` 时，可按时间线逐段检查：
-
-| 时间范围 | Clip | 模板 | 预期画面 |
-|---:|---:|---|---|
-| `0-4000ms` | 101 | `STATIC` | 从平台北侧上方固定俯看，画面不应移动 |
-| `4000-11000ms` | 102 | `ORBIT` | 前 `1200ms` 从静态镜头平滑过渡，然后围绕平台中心半圈环绕 |
-| `11000-16000ms` | 103 | `DOLLY` | 前 `900ms` 缓入转场，然后从平台北侧向平台推进 |
-| `16000-21000ms` | 104 | `TRUCK` | 前 `900ms` 缓出转场，然后沿平台南侧横向穿过 |
-| `21000-26000ms` | 105 | `PEDESTAL` | 前 `1000ms` 匀速转场，然后在平台东北外侧垂直升起 |
-| `26000-31000ms` | 106 | `PAN_TILT` | 前 `1200ms` 平滑转场，然后固定位置左右摇摄并略微俯仰 |
-| `31000-38000ms` | 107 | `PATH` | 前 `1500ms` 平滑转场，然后沿关键帧绕平台移动 |
-
-### 11.1 使用内置模板 + 转场测试配置
-
-仓库已提供一套模板测试配置：
-
-```text
-examples/livehelper/clips.json
-examples/livehelper/managers.json
-```
-
-测试区域假设是一个小平台：
-
-```text
-from -8 -61 -8 to 24 -61 24
-```
-
-样例相机围绕平台中心 `(8, -61, 8)` 布置，主要使用 `y=-58..-45` 的观察高度。
-
-测试 Manager：
-
-| ID | 名称 | 总时长 | Sender |
-|---:|---|---:|---|
-| 201 | `Platform Template Transition Test` | 38000ms | `LiveHelper-Platform Template Transition Test` |
-
-该 Manager 会按顺序播放所有模板，并测试这些转场：
-
-| 进入 Clip | 转场时长 | 缓动 |
-|---:|---:|---|
-| 101 | 0ms | `linear` |
-| 102 | 1200ms | `easeInOut` |
-| 103 | 900ms | `easeIn` |
-| 104 | 900ms | `easeOut` |
-| 105 | 1000ms | `linear` |
-| 106 | 1200ms | `easeInOut` |
-| 107 | 1500ms | `easeInOut` |
-
-使用方式：
-
-1. 执行 `./gradlew runClient`
-2. 进入包含 `-8 -61 -8` 到 `24 -61 24` 平台的测试世界
-3. 打开 `http://localhost:23512`
-4. 在 Managers 页面启动 `Platform Template Transition Test`
-5. OBS 添加 Spout2 Capture 并选择 `LiveHelper-Platform Template Transition Test`
-
-如果正式游戏实例需要同一套配置，可把这两个 JSON 复制到：
-
-```text
-.minecraft/config/livehelper/
-```
 
 ### 12. 停止 Manager
 

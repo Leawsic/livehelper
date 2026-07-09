@@ -59,6 +59,10 @@ public class PlaybackEngine {
 
     public FrameCommand computeFrame() {
         long elapsedMs = (System.nanoTime() - startTimeNs) / 1_000_000L;
+        long totalDuration = totalDuration();
+        if (manager.loop() && totalDuration > 0L) {
+            elapsedMs %= totalDuration;
+        }
         List<ClipSlot> slots = manager.clips();
 
         for (int i = 0; i < slots.size(); i++) {
@@ -150,6 +154,11 @@ public class PlaybackEngine {
 
     public boolean isFinished() {
         long elapsedMs = (System.nanoTime() - startTimeNs) / 1_000_000L;
+        if (manager.loop()) return false;
+        return elapsedMs >= totalDuration();
+    }
+
+    private long totalDuration() {
         long totalDuration = 0L;
         for (ClipSlot slot : manager.clips()) {
             Clip clip = clipCache.get(slot.clipId());
@@ -157,6 +166,6 @@ public class PlaybackEngine {
                 totalDuration = Math.max(totalDuration, slot.startOffset() + clip.duration());
             }
         }
-        return elapsedMs >= totalDuration;
+        return totalDuration;
     }
 }

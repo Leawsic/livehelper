@@ -142,6 +142,8 @@ function renderOverview() {
                 <span class="badge ${status}">${status}</span>
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
+                ${manager.loop ? '<span class="badge good">Loop</span>' : ''}
+                ${manager.locked ? '<span class="badge warn">Locked</span>' : ''}
                 <span class="badge">${totalDuration}ms</span>
             </div>
             <p>OBS Sender: <strong>LiveHelper-${escapeHtml(manager.name)}</strong></p>
@@ -203,6 +205,8 @@ function renderManagers() {
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 <span class="badge">RD ${manager.renderDistance}</span>
+                ${manager.loop ? '<span class="badge good">Loop</span>' : ''}
+                ${manager.locked ? '<span class="badge warn">Locked</span>' : ''}
                 <span class="badge">${totalDuration}ms</span>
             </div>
             <p>${slots || 'No clips in timeline'}</p>
@@ -331,7 +335,7 @@ function openManagerEditor(manager = null) {
         return;
     }
     const isEdit = !!manager;
-    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, clips: [{clipId: clips[0].id, startOffset: 0, transitionDuration: 0, transitionEasing: 'linear'}]});
+    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, loop: false, locked: false, clips: [{clipId: clips[0].id, startOffset: 0, transitionDuration: 0, transitionEasing: 'linear'}]});
     byId('editor-title').textContent = isEdit ? `编辑 Manager #${data.id}` : '新建 Manager';
     byId('editor-fields').innerHTML = `
         <div class="form-grid">
@@ -340,6 +344,8 @@ function openManagerEditor(manager = null) {
             <label>宽度<input data-field="width" type="number" min="16" value="${data.width || 1280}"></label>
             <label>高度<input data-field="height" type="number" min="16" value="${data.height || 720}"></label>
             <label>渲染距离<input data-field="renderDistance" type="number" min="2" value="${data.renderDistance || 12}"></label>
+            <label class="checkline"><input data-field="loop" type="checkbox" ${data.loop ? 'checked' : ''}>循环播放</label>
+            <label class="checkline"><input data-field="locked" type="checkbox" ${data.locked ? 'checked' : ''}>锁定推流</label>
             <div class="timeline-builder full">
                 <div class="section-head"><div><h3>时间线片段</h3><p class="help">无需记 Clip ID，直接从下拉框选择。</p></div><button type="button" id="add-slot">添加片段</button></div>
                 <div id="slot-list"></div>
@@ -363,7 +369,9 @@ function openManagerEditor(manager = null) {
             width: positiveNumber('[data-field="width"]', 1280),
             height: positiveNumber('[data-field="height"]', 720),
             fps: positiveNumber('[data-field="fps"]', 30),
-            renderDistance: positiveNumber('[data-field="renderDistance"]', 12)
+            renderDistance: positiveNumber('[data-field="renderDistance"]', 12),
+            loop: checked('[data-field="loop"]'),
+            locked: checked('[data-field="locked"]')
         };
         if (!payload.clips.length) throw new Error('Manager 至少需要一个 Clip');
         if (isEdit) await API.updateManager(data.id, payload);
@@ -618,6 +626,11 @@ function positiveNumber(selector, fallback) {
 function val(selector) {
     const el = qs(selector);
     return el ? el.value : '';
+}
+
+function checked(selector) {
+    const el = qs(selector);
+    return !!el?.checked;
 }
 
 function qs(selector) { return document.querySelector(selector); }

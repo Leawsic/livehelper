@@ -12,5 +12,11 @@ public record Manager(
     int width,
     int height,
     int fps,
-    int renderDistance
-) {}
+    int renderDistance,
+    boolean loop,
+    boolean locked
+) {
+    public Manager(int id, String name, List<ClipSlot> clips, int width, int height, int fps, int renderDistance) {
+        this(id, name, clips, width, height, fps, renderDistance, false, false);
+    }
+}

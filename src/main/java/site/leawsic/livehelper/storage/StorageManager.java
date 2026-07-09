@@ -160,7 +160,7 @@ public class StorageManager {
     public Manager createManager(Manager manager) {
         int id = nextManagerId.getAndIncrement();
         Manager newManager = new Manager(id, manager.name(), manager.clips(),
-            manager.width(), manager.height(), manager.fps(), manager.renderDistance());
+            manager.width(), manager.height(), manager.fps(), manager.renderDistance(), manager.loop(), manager.locked());
         managers.add(newManager);
         saveManagers();
         return newManager;
@@ -170,7 +170,7 @@ public class StorageManager {
         for (int i = 0; i < managers.size(); i++) {
             if (managers.get(i).id() == id) {
                 managers.set(i, new Manager(id, manager.name(), manager.clips(),
-                    manager.width(), manager.height(), manager.fps(), manager.renderDistance()));
+                    manager.width(), manager.height(), manager.fps(), manager.renderDistance(), manager.loop(), manager.locked()));
                 saveManagers();
                 return;
             }

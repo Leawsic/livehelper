@@ -57,6 +57,7 @@ public enum StreamManager {
         if (manager == null) {
             throw new IllegalArgumentException("Manager not found: " + managerId);
         }
+        stopUnlockedStreamsExcept(managerId);
         Map<Integer, Clip> clipCache = new HashMap<>();
         for (var slot : manager.clips()) {
             Clip clip = StorageManager.getInstance().getClip(slot.clipId());
@@ -66,6 +67,19 @@ public enum StreamManager {
         StreamInstance instance = new StreamInstance(managerId, manager, engine);
         activeStreams.put(managerId, instance);
         LiveHelper.LOGGER.info("Started stream for manager: {}", manager.name());
+    }
+
+    private void stopUnlockedStreamsExcept(int managerId) {
+        for (int activeId : new ArrayList<>(activeStreams.keySet())) {
+            if (activeId == managerId) continue;
+            Manager activeManager = StorageManager.getInstance().getManager(activeId);
+            if (activeManager != null && activeManager.locked()) continue;
+            StreamInstance instance = activeStreams.remove(activeId);
+            if (instance != null) {
+                instance.close();
+                LiveHelper.LOGGER.info("Stopped unlocked manager {} before starting {}", activeId, managerId);
+            }
+        }
     }
 
     public void stop(int managerId) {
