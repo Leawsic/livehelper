@@ -31,9 +31,15 @@ public class GameRendererMixin {
 
     @Inject(method = "render", at = @At("HEAD"))
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
+        StreamManager.INSTANCE.prepareDueFrames();
         if (ActiveRenderContext.isOffscreenActive()) {
             minecraft.options.hideGui = true;
         }
+    }
+
+    @Inject(method = "render", at = @At("TAIL"))
+    private void afterRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
+        StreamManager.INSTANCE.sendPreparedFrames();
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;pauseGame(Z)V"))

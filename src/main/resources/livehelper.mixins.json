@@ -7,7 +7,6 @@
         "CameraAccessor",
         "CameraMixin",
         "MinecraftAccessor",
-        "MinecraftMixin",
         "GameRendererMixin"
     ],
     "injectors": {

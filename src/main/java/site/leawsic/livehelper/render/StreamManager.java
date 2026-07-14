@@ -141,10 +141,18 @@ public enum StreamManager {
         return activeStreams.keySet();
     }
 
-    public void renderDueAll() {
+    public void prepareDueFrames() {
+        if (activeStreams.isEmpty()) return;
         long nowNs = System.nanoTime();
-        for (StreamInstance instance : new ArrayList<>(activeStreams.values())) {
-            instance.renderIfDue(nowNs);
+        for (StreamInstance instance : activeStreams.values()) {
+            instance.prepareFrameIfDue(nowNs);
+        }
+    }
+
+    public void sendPreparedFrames() {
+        if (activeStreams.isEmpty()) return;
+        for (StreamInstance instance : activeStreams.values()) {
+            instance.sendPreparedFrame();
         }
     }
 
