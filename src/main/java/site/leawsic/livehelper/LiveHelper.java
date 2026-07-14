@@ -3,12 +3,10 @@ package site.leawsic.livehelper;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import site.leawsic.livehelper.command.LiveHelperCommands;
-import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.server.ApiServer;
 import site.leawsic.livehelper.storage.StorageManager;
 
@@ -32,7 +30,6 @@ public class LiveHelper implements ClientModInitializer {
             LOGGER.error("Failed to start API server", e);
         }
 
-        ClientTickEvents.START_CLIENT_TICK.register(client -> StreamManager.INSTANCE.tickAll());
         LiveHelperCommands.register();
 
         LOGGER.info("LiveHelper initialized!");

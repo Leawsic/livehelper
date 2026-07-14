@@ -141,9 +141,10 @@ public enum StreamManager {
         return activeStreams.keySet();
     }
 
-    public void tickAll() {
-        for (StreamInstance instance : activeStreams.values()) {
-            instance.tick();
+    public void renderDueAll() {
+        long nowNs = System.nanoTime();
+        for (StreamInstance instance : new ArrayList<>(activeStreams.values())) {
+            instance.renderIfDue(nowNs);
         }
     }
 

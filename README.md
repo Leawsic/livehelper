@@ -19,7 +19,6 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
   - `PEDESTAL`
   - `PAN_TILT`
   - `PATH`
-- 自定义主线程帧调度器 `MainScheduler`
 - 主摄像机接管式虚拟机位推流
 - Manager 时间线支持相邻 Clip 之间的摄像机转场
 - Spout2 DLL + JNA 发送主窗口 FBO 到 OBS

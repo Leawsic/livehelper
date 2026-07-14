@@ -1,13 +1,11 @@
 package site.leawsic.livehelper.render;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
 import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.model.Manager;
-import site.leawsic.livehelper.scheduler.MainScheduler;
 import site.leawsic.livehelper.spout.SpoutSender;
 import site.leawsic.livehelper.util.ActiveRenderContext;
 
@@ -19,11 +17,11 @@ public class StreamInstance implements AutoCloseable {
     private final Manager config;
     private final PlaybackEngine engine;
     private final SpoutSender spoutSender;
-    private final Camera dummyCamera;
     private final long frameIntervalNs;
 
     private boolean stopped;
     private boolean firstFrameSent;
+    private long lastRenderNs;
     private List<StreamInstance> predecessors;
 
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
@@ -34,12 +32,12 @@ public class StreamInstance implements AutoCloseable {
         this.managerId = managerId;
         this.config = manager;
         this.engine = engine;
-        this.dummyCamera = new Camera();
         this.frameIntervalNs = TimeUnit.SECONDS.toNanos(1) / Math.max(1, manager.fps());
         this.spoutSender = new SpoutSender("LiveHelper-" + manager.name());
         this.predecessors = predecessors;
+        this.lastRenderNs = System.nanoTime() - frameIntervalNs;
 
-        scheduleNext(System.nanoTime());
+        renderIfDue(System.nanoTime());
     }
 
     /**
@@ -50,14 +48,16 @@ public class StreamInstance implements AutoCloseable {
         stopped = true;
     }
 
-    private void scheduleNext(long currentNs) {
+    /**
+     * 由 MC 主循环每帧调用。若到达本实例的推流帧间隔则渲染一帧并发送到 Spout。
+     * 渲染节奏由 frameIntervalNs 决定，与 MC 帧率解耦：MC 帧率高于推流帧率时跳帧，
+     * 低于推流帧率时按 MC 速度输出。
+     */
+    public void renderIfDue(long nowNs) {
         if (stopped) return;
-        long nextFrameNs = Math.max(currentNs + frameIntervalNs, System.nanoTime());
-        MainScheduler.submitTask(nextFrameNs, (isOutOfMemoryRecovery, taskNs) -> {
-            if (stopped) return;
-            renderFrame();
-            scheduleNext(taskNs);
-        });
+        if (nowNs - lastRenderNs < frameIntervalNs) return;
+        lastRenderNs = nowNs;
+        renderFrame();
     }
 
     private void renderFrame() {
@@ -87,10 +87,6 @@ public class StreamInstance implements AutoCloseable {
         } catch (Exception e) {
             LiveHelper.LOGGER.error("Error rendering stream {}", managerId, e);
         }
-    }
-
-    public void tick() {
-        dummyCamera.tick();
     }
 
     private void closeAfterHandoff() {
