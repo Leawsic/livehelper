@@ -4,6 +4,8 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
 
 它允许用户通过本地 Web UI 创建镜头片段（Clip）和播放编排（Manager），在 Minecraft 客户端内按时间线渲染虚拟摄像机画面，并通过 Spout2 发送到 OBS Studio。
 
+灵感来源：https://github.com/burningtnt/LiveHelper
+
 ## 功能概览
 
 - Fabric 1.20.1 客户端 Mod
