@@ -10,53 +10,73 @@ const API = {
     startManager: id => request(`/api/managers/${id}/start`, {method: 'POST'}),
     stopManager: id => request(`/api/managers/${id}/stop`, {method: 'POST'}),
     getManagerStatus: id => request(`/api/managers/${id}/status`),
-    getPose: () => request('/api/pose')
+    getPose: () => request('/api/pose'),
+    getTemplates: () => request('/api/templates')
 };
 
-const TEMPLATE_FIELDS = {
-    STATIC: ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ', 'fov'],
-    STATIC_TRACK: ['posX', 'posY', 'posZ', 'entityId', 'entityUuid', 'entityName', 'targetYOffset', 'trackSpeed', 'fov'],
-    ORBIT: ['targetX', 'targetY', 'targetZ', 'radius', 'speed', 'startAngle', 'elevation', 'fov'],
-    DOLLY: ['fromX', 'fromY', 'fromZ', 'toX', 'toY', 'toZ', 'easing', 'fov'],
-    TRUCK: ['fromX', 'fromY', 'fromZ', 'toX', 'toY', 'toZ', 'easing', 'fov'],
-    PEDESTAL: ['fromHeight', 'toHeight', 'centerX', 'centerZ', 'easing', 'fov', 'rotX', 'rotY'],
-    PAN_TILT: ['startPan', 'endPan', 'startTilt', 'endTilt', 'posX', 'posY', 'posZ', 'fov'],
-    PATH: ['keyframes']
-};
+/**
+ * 模板参数 schema，来自 /api/templates（Java 侧 TemplateSchemas 为唯一权威）。
+ * 结构：{ [templateName]: FieldDef[] }，FieldDef 见 FieldDef.java。
+ *
+ * 取代原先散落在此处的四张硬编码表（TEMPLATE_FIELDS / STRING_FIELDS / FIELD_LABELS / FIELD_HELP）
+ * 以及 defaultParam() 里的默认值分支：新增模板或改默认值只需改 Java 一处。
+ */
+let templateSchema = {};
+let schemaLoaded = false;
 
-const STRING_FIELDS = new Set(['entityUuid', 'entityName']);
+/** 关键帧字段无默认值，新建 Clip 时给一段可用的起止点作为起点（仅 UI 种子，不属于 schema）。 */
+const KEYFRAME_STARTER = [
+    {t: 0, x: 0, y: 80, z: 0, rx: 0, ry: 0, rz: 0, fov: 70},
+    {t: 1, x: 10, y: 80, z: 10, rx: 0, ry: 90, rz: 0, fov: 55}
+];
 
-const FIELD_LABELS = {
-    posX: '位置 X', posY: '位置 Y', posZ: '位置 Z',
-    rotX: '俯仰 Pitch', rotY: '偏航 Yaw', rotZ: '滚转 Roll',
-    fov: '视场角 FOV',
-    entityId: '实体 ID', entityUuid: '实体 UUID', entityName: '实体名称', targetYOffset: '目标 Y 偏移', trackSpeed: '追踪平滑速度',
-    targetX: '目标 X', targetY: '目标 Y', targetZ: '目标 Z',
-    radius: '环绕半径', speed: '环绕速度', startAngle: '起始角度', elevation: '仰角',
-    fromX: '起点 X', fromY: '起点 Y', fromZ: '起点 Z',
-    toX: '终点 X', toY: '终点 Y', toZ: '终点 Z',
-    easing: '缓动',
-    fromHeight: '起始高度', toHeight: '结束高度', centerX: '中心 X', centerZ: '中心 Z',
-    startPan: '起始水平角', endPan: '结束水平角', startTilt: '起始俯仰角', endTilt: '结束俯仰角',
-    keyframes: '关键帧 JSON'
-};
+/** 缓动候选值：从 schema 里任一模板的 easing 字段取，避免前端再写一份列表。 */
+function easingValues() {
+    for (const fields of Object.values(templateSchema)) {
+        const easing = fields.find(f => f.key === 'easing');
+        if (easing && Array.isArray(easing.values) && easing.values.length) {
+            return easing.values;
+        }
+    }
+    return ['linear'];
+}
 
-const FIELD_HELP = {
-    posX: '摄像机所在的世界 X 坐标。', posY: '摄像机所在的世界 Y 坐标，通常用玩家眼睛高度。', posZ: '摄像机所在的世界 Z 坐标。',
-    rotX: '上下看，正值向下，负值向上。', rotY: '水平朝向，使用 Minecraft yaw。', rotZ: '画面滚转角，一般保持 0。',
-    fov: '镜头视场角，数值越大越广角。',
-    entityId: 'Minecraft 运行时实体 ID，优先级最高；可用 /livehelper entities 查看附近实体。', entityUuid: '实体 UUID，适合长期锁定同一个实体。',
-    entityName: '实体显示名称，entityId/UUID 为空或找不到时按名称精确匹配。', targetYOffset: '在实体眼睛高度基础上额外增加的 Y 偏移。', trackSpeed:
-    '镜头追踪实体的平滑速度。0 为即时锁定；数值越大越跟手，越小越丝滑但延迟越明显。推荐 5-25。',
-    targetX: '环绕时始终看向的目标 X 坐标。', targetY: '环绕时始终看向的目标 Y 坐标。', targetZ: '环绕时始终看向的目标 Z 坐标。',
-    radius: '摄像机到目标点的水平距离。', speed: 'Clip 播放期间绕目标旋转的圈数。', startAngle: '环绕起始角度，单位度。', elevation: '摄像机相对目标点的仰角，单位度。',
-    fromX: '移动起点 X 坐标。', fromY: '移动起点 Y 坐标。', fromZ: '移动起点 Z 坐标。',
-    toX: '移动终点 X 坐标。', toY: '移动终点 Y 坐标。', toZ: '移动终点 Z 坐标。',
-    easing: '控制运动速度曲线。',
-    fromHeight: '升降镜头起始 Y 高度。', toHeight: '升降镜头结束 Y 高度。', centerX: '升降镜头固定 X 坐标。', centerZ: '升降镜头固定 Z 坐标。',
-    startPan: '水平旋转起始角度。', endPan: '水平旋转结束角度。', startTilt: '俯仰起始角度。', endTilt: '俯仰结束角度。',
-    keyframes: '路径点列表。每个点包含 t、x、y、z、rx、ry、rz、fov。t 范围为 0 到 1。'
-};
+function templateNames() {
+    return Object.keys(templateSchema);
+}
+
+function fieldsFor(template) {
+    return templateSchema[template] || [];
+}
+
+function fieldDef(template, key) {
+    return fieldsFor(template).find(f => f.key === key) || null;
+}
+
+/** 取参数值：优先用已存配置，其次用 schema 默认值。 */
+function paramValue(template, key, params) {
+    if (params && Object.prototype.hasOwnProperty.call(params, key)) return params[key];
+    const def = fieldDef(template, key);
+    return def && def.def !== undefined ? def.def : '';
+}
+
+async function loadTemplateSchema() {
+    try {
+        const payload = await API.getTemplates();
+        const list = payload.templates || [];
+        templateSchema = {};
+        list.forEach(entry => {
+            templateSchema[entry.template] = entry.fields || [];
+        });
+        schemaLoaded = true;
+        if (payload.missingSchema) {
+            console.warn('Templates without schema:', payload.missingSchema);
+        }
+    } catch (error) {
+        schemaLoaded = false;
+        console.error('Failed to load template schema', error);
+    }
+}
 
 let clips = [];
 let managers = [];
@@ -83,6 +103,7 @@ async function refreshAll() {
     refreshing = true;
     setBusy(true);
     try {
+        if (!schemaLoaded) await loadTemplateSchema();
         clips = await API.getClips();
         managers = await API.getManagers();
         try {
@@ -228,7 +249,7 @@ function openClipEditor(clip = null) {
         <div class="form-grid">
             <label>名称<input data-field="name" value="${escapeAttr(data.name)}" placeholder="例如 Orbit 主舞台"></label>
             <label>时长(ms)<input data-field="duration" type="number" min="1" value="${data.duration || 5000}"></label>
-            <label class="full">模板<select data-field="template">${Object.keys(TEMPLATE_FIELDS).map(t => `<option ${t === data.template ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+            <label class="full">模板<select data-field="template">${templateNames().map(t => `<option ${t === data.template ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
             <div id="pose-tools" class="pose-tools full"></div>
             <div id="param-fields" class="full"></div>
         </div>
@@ -281,21 +302,54 @@ function renderPoseTools(template) {
 
 function renderParamFields(template, params) {
     const root = byId('param-fields');
-    root.innerHTML = TEMPLATE_FIELDS[template].map(key => {
-        const value = params[key] ?? defaultParam(key);
-        const label = FIELD_LABELS[key] || key;
-        const help = FIELD_HELP[key] || key;
-        if (key === 'easing') {
-            return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><select data-param="${key}">${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(v => `<option ${v === value ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="help">${escapeHtml(help)}</span></label>`;
-        }
-        if (key === 'keyframes') {
-            return renderPathEditor(value, params.fov ?? defaultParam('fov'), label, help);
-        }
-        if (STRING_FIELDS.has(key)) {
-            return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
-        }
-        return `<label title="${escapeAttr(help)}"><span class="field-title">${label}<small>${key}</small></span><input data-param="${key}" type="number" step="0.1" value="${escapeAttr(value)}"><span class="help">${escapeHtml(help)}</span></label>`;
-    }).join('');
+    if (!schemaLoaded) {
+        root.innerHTML = `<div class="tool-card"><div><strong>无法读取模板 schema</strong>
+            <p class="help">未能从 /api/templates 取得字段定义。请确认游戏内 Mod 已加载，然后刷新页面。</p></div></div>`;
+        return;
+    }
+
+    const fields = fieldsFor(template);
+    if (!fields.length) {
+        root.innerHTML = `<div class="tool-card"><div><strong>该模板没有可配置参数</strong>
+            <p class="help">${escapeHtml(template)} 不接受额外参数。</p></div></div>`;
+        return;
+    }
+
+    const fallbackFov = paramValue(template, 'fov', params) || 70;
+    root.innerHTML = fields.map(field => renderParamField(template, field, params, fallbackFov)).join('');
+}
+
+function renderParamField(template, field, params, fallbackFov) {
+    const {key, label, help} = field;
+    const value = paramValue(template, key, params);
+    const head = `<span class="field-title">${escapeHtml(label)}<small>${escapeHtml(key)}</small></span>`;
+    const foot = `<span class="help">${escapeHtml(help)}</span>`;
+    const title = ` title="${escapeAttr(help)}"`;
+
+    if (field.type === 'keyframes') {
+        return renderPathEditor(value || KEYFRAME_STARTER, fallbackFov, label, help);
+    }
+    if (field.type === 'enum') {
+        const values = field.values || [];
+        return `<label${title}>${head}<select data-param="${key}" data-param-type="enum">${
+            values.map(v => `<option ${String(v) === String(value) ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')
+        }</select>${foot}</label>`;
+    }
+    if (field.type === 'string') {
+        return `<label${title}>${head}<input data-param="${key}" data-param-type="string" value="${escapeAttr(value)}">${foot}</label>`;
+    }
+    if (field.type === 'boolean') {
+        return `<label class="checkline"${title}>${head}<input data-param="${key}" data-param-type="boolean" type="checkbox" ${
+            value ? 'checked' : ''
+        }>${foot}</label>`;
+    }
+
+    // number
+    const step = field.step || 0.1;
+    const min = field.min !== undefined && field.min !== null ? ` min="${field.min}"` : '';
+    const max = field.max !== undefined && field.max !== null ? ` max="${field.max}"` : '';
+    return `<label${title}>${head}<input data-param="${key}" data-param-type="number" type="number" step="${step}"${
+        min}${max} value="${escapeAttr(value)}">${foot}</label>`;
 }
 
 function renderPathEditor(value, fallbackFov, label, help) {
@@ -335,7 +389,7 @@ function openManagerEditor(manager = null) {
         return;
     }
     const isEdit = !!manager;
-    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, loop: false, locked: false, clips: [{clipId: clips[0].id, startOffset: 0, transitionDuration: 0, transitionEasing: 'linear'}]});
+    const data = clone(manager || {name: '', width: 1280, height: 720, fps: 30, renderDistance: 12, loop: false, loopMode: 'repeat', locked: false, clips: [{clipId: clips[0].id, startOffset: 0, transitionDuration: 0, transitionEasing: 'linear'}]});
     byId('editor-title').textContent = isEdit ? `编辑 Manager #${data.id}` : '新建 Manager';
     byId('editor-fields').innerHTML = `
         <div class="form-grid">
@@ -345,6 +399,12 @@ function openManagerEditor(manager = null) {
             <label>高度<input data-field="height" type="number" min="16" value="${data.height || 720}"></label>
             <label>渲染距离<input data-field="renderDistance" type="number" min="2" value="${data.renderDistance || 12}"></label>
             <label class="checkline"><input data-field="loop" type="checkbox" ${data.loop ? 'checked' : ''}>循环播放</label>
+            <label>循环方式<select data-field="loopMode">${['repeat', 'pingpong'].map(mode => `
+                <option value="${mode}" ${(data.loopMode || 'repeat') === mode ? 'selected' : ''}>${
+                    mode === 'pingpong' ? 'pingpong（往复折返）' : 'repeat（从头重播）'
+                }</option>`).join('')}</select>
+                <span class="help">pingpong 会把整条时间线折返播放，首尾姿态接近时观感最好，适合来回扫摇的监控机位。</span>
+            </label>
             <label class="checkline"><input data-field="locked" type="checkbox" ${data.locked ? 'checked' : ''}>锁定推流</label>
             <div class="timeline-builder full">
                 <div class="section-head"><div><h3>时间线片段</h3><p class="help">无需记 Clip ID，直接从下拉框选择。</p></div><button type="button" id="add-slot">添加片段</button></div>
@@ -371,6 +431,7 @@ function openManagerEditor(manager = null) {
             fps: positiveNumber('[data-field="fps"]', 30),
             renderDistance: positiveNumber('[data-field="renderDistance"]', 12),
             loop: checked('[data-field="loop"]'),
+            loopMode: val('[data-field="loopMode"]') || 'repeat',
             locked: checked('[data-field="locked"]')
         };
         if (!payload.clips.length) throw new Error('Manager 至少需要一个 Clip');
@@ -391,7 +452,7 @@ function renderSlots(slots) {
             <label>Clip<select data-slot-clip>${clips.map(clip => `<option value="${clip.id}" ${clip.id === slot.clipId ? 'selected' : ''}>#${clip.id} ${escapeHtml(clip.name)} (${clip.template}, ${clip.duration}ms)</option>`).join('')}</select></label>
             <label>开始(ms)<input data-slot-offset type="number" min="0" value="${slot.startOffset || 0}"></label>
             <label>转场(ms)<input data-slot-transition-duration type="number" min="0" value="${slot.transitionDuration || 0}"></label>
-            <label>缓动<select data-slot-transition-easing>${['linear', 'easeIn', 'easeOut', 'easeInOut'].map(easing => `<option ${easing === (slot.transitionEasing || 'linear') ? 'selected' : ''}>${easing}</option>`).join('')}</select></label>
+            <label>缓动<select data-slot-transition-easing>${easingValues().map(easing => `<option ${easing === (slot.transitionEasing || 'linear') ? 'selected' : ''}>${easing}</option>`).join('')}</select></label>
             <div class="card-actions">
                 <button type="button" data-slot-up>↑</button>
                 <button type="button" data-slot-down>↓</button>
@@ -450,7 +511,7 @@ function normalizePathKeyframes(value, fallbackFov = 70) {
         }
     }
     if (!Array.isArray(keyframes) || !keyframes.length) {
-        keyframes = defaultParam('keyframes');
+        keyframes = KEYFRAME_STARTER;
     }
     return keyframes.map(frame => ({
         t: roundParam(frame.t ?? 0),
@@ -544,8 +605,16 @@ function collectParams() {
     const params = {};
     document.querySelectorAll('[data-param]').forEach(input => {
         const key = input.dataset.param;
-        if (key === 'easing' || STRING_FIELDS.has(key)) params[key] = input.value;
-        else params[key] = Number(input.value);
+        const type = input.dataset.paramType || 'number';
+        if (type === 'boolean') {
+            params[key] = input.checked;
+        } else if (type === 'number') {
+            const n = Number(input.value);
+            // 空输入不写进 params，交给后端按 schema 默认值兜底，避免写入 NaN。
+            if (Number.isFinite(n)) params[key] = n;
+        } else {
+            params[key] = input.value;
+        }
     });
     if (qs('[data-path-editor]')) {
         params.keyframes = collectPathKeyframes();
@@ -577,20 +646,6 @@ function showEditor(onSave) {
         }
     };
     dialog.showModal();
-}
-
-function defaultParam(key) {
-    if (key === 'fov') return 70;
-    if (key === 'trackSpeed') return 8;
-    if (STRING_FIELDS.has(key)) return '';
-    if (key === 'speed') return 1;
-    if (key === 'radius') return 10;
-    if (key === 'easing') return 'linear';
-    if (key === 'keyframes') return [
-        {t: 0, x: 0, y: 80, z: 0, rx: 0, ry: 0, rz: 0, fov: 70},
-        {t: 1, x: 10, y: 80, z: 10, rx: 0, ry: 90, rz: 0, fov: 55}
-    ];
-    return 0;
 }
 
 function managerDuration(manager) {

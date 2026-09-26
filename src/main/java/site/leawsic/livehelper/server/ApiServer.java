@@ -11,6 +11,8 @@ import site.leawsic.livehelper.engine.templates.MotionTemplates;
 import site.leawsic.livehelper.model.Clip;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.render.StreamManager;
+import site.leawsic.livehelper.schema.ClipValidator;
+import site.leawsic.livehelper.schema.TemplateSchemas;
 import site.leawsic.livehelper.storage.StorageManager;
 import site.leawsic.livehelper.util.AngleConvert;
 
@@ -98,7 +100,13 @@ public final class ApiServer {
                 sendError(exchange, 405, "GET required");
                 return;
             }
-            sendJson(exchange, 200, GSON.toJson(MotionTemplates.getAvailable()));
+            // 返回完整 schema（模板名 + 字段定义），Web UI 据此动态渲染表单。
+            // 旧的「只返回模板名数组」形状不再输出，前端已同步改为读取 schema。
+            String missing = TemplateSchemas.missingSchemas();
+            if (!missing.isEmpty()) {
+                LiveHelper.LOGGER.warn("Templates without schema (UI will fall back to free-form): {}", missing);
+            }
+            sendJson(exchange, 200, TemplateSchemas.toJson());
         }
     }
 
@@ -111,13 +119,17 @@ public final class ApiServer {
                 if ("GET".equals(method)) {
                     sendJson(exchange, 200, GSON.toJson(StorageManager.getInstance().getAllClips()));
                 } else if ("POST".equals(method)) {
-                    Clip created = StorageManager.getInstance().createClip(GSON.fromJson(readBody(exchange), Clip.class));
+                    Clip incoming = GSON.fromJson(readBody(exchange), Clip.class);
+                    rejectInvalidClip(exchange, incoming);
+                    Clip created = StorageManager.getInstance().createClip(incoming);
                     JsonObject res = new JsonObject();
                     res.addProperty("id", created.id());
                     sendJson(exchange, 201, res.toString());
                 } else if ("PUT".equals(method)) {
                     int id = extractId(path, "/api/clips/");
-                    StorageManager.getInstance().updateClip(id, GSON.fromJson(readBody(exchange), Clip.class));
+                    Clip incoming = GSON.fromJson(readBody(exchange), Clip.class);
+                    rejectInvalidClip(exchange, incoming);
+                    StorageManager.getInstance().updateClip(id, incoming);
                     sendJson(exchange, 200, "{}");
                 } else if ("DELETE".equals(method)) {
                     int id = extractId(path, "/api/clips/");
@@ -128,6 +140,17 @@ public final class ApiServer {
                 }
             } catch (Exception e) {
                 sendError(exchange, 400, e.getMessage());
+            }
+        }
+
+        /** 校验不通过直接 400，避免把配错的 Clip 写进 config 后画面默默按默认值跑。 */
+        private void rejectInvalidClip(HttpExchange exchange, Clip clip) throws IOException {
+            ClipValidator.Result result = ClipValidator.validate(clip);
+            for (String warning : result.warnings()) {
+                LiveHelper.LOGGER.warn("Clip validation warning: {}", warning);
+            }
+            if (!result.ok()) {
+                sendError(exchange, 400, "invalid clip: " + result.message());
             }
         }
     }
