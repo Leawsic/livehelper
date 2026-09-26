@@ -21,8 +21,11 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
   - `PEDESTAL`
   - `PAN_TILT`
   - `PATH`
+  - `SPLINE`
+- 模板参数由 Java 侧 schema 定义并通过 `/api/templates` 下发，Web UI 动态生成表单
+- 写入前静态校验（时长、必填参数、枚举取值、关键帧时间单调性）
 - 主摄像机接管式虚拟机位推流
-- Manager 时间线支持相邻 Clip 之间的摄像机转场
+- Manager 时间线支持相邻 Clip 之间的摄像机转场，以及 `repeat` / `pingpong` 两种循环方式
 - Spout2 DLL + JNA 发送主窗口 FBO 到 OBS
 - Stream 活跃时阻止失焦自动暂停，手动 ESC 暂停仍保留
 
@@ -97,6 +100,8 @@ http://localhost:23512
 | `/livehelper entities [radius]` | 列出附近实体的运行时 ID、名称、UUID 和位置，默认半径 32 格 |
 | `/livehelper list clips` | 列出所有 Clip 的 ID、名称、模板和时长 |
 | `/livehelper list managers` | 列出所有 Manager 的 ID、名称、时长和运行状态 |
+| `/livehelper validate <clipId>` | 对某个 Clip 跑一遍写入前校验，输出错误与警告 |
+| `/livehelper eval <clipId> [progress] [samples]` | 离线查看 Clip 在指定进度下的相机参数；`samples` > 1 时同时打印相邻采样点的世界距离 |
 | `/livehelper start <managerId>` | 启动指定 Manager 推流 |
 | `/livehelper stop <managerId>` | 停止指定 Manager 推流 |
 | `/livehelper stop-all` | 停止所有活跃 Manager |
@@ -232,6 +237,7 @@ Clip 参数编辑器提供“玩家坐标辅助”：进入世界后，站到想
 Manager 级别字段：
 
 - `loop` 为 `true` 时，时间线播放到总时长后会从头继续播放；默认为 `false`
+- `loopMode` 为 `repeat`（从头重播）或 `pingpong`（往复折返，监控式来回摇机位只需一个 Manager）；缺省为 `repeat`
 - `locked` 为 `true` 时，启动其它 Manager 不会自动停止它；默认为 `false`
 - 启动一个新的未 locked Manager 时，会自动停止其它未 locked 的活跃 Manager，便于保持单主机位推流
 - 为避免快速切换时 OBS 短暂黑屏，旧 Manager 会先暂停调度并保留上一帧输出，直到新 Manager 首帧发送成功后再释放旧 Spout sender
@@ -273,9 +279,11 @@ Manager 级别字段：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/templates` | 获取模板列表 |
+| `GET` | `/api/templates` | 获取模板列表**及其参数字段 schema**（Web UI 据此动态渲染表单） |
 | `GET` | `/api/pose` | 获取当前玩家位置与朝向四元数 |
 | `GET` | `/` | 打开 Web UI |
+
+写入 `POST` / `PUT` Clip 时会先做静态校验，不通过返回 `400` 并附带错误列表（未知模板、非法缓动名、关键帧 `t` 非递增、FOV 越界等）。
 
 ## 实际测试完整流程
 
@@ -480,7 +488,16 @@ curl http://localhost:23512/api/managers/1/status
 - `TRUCK`：当前实现继承 `DOLLY`，参数和运动逻辑相同；约定上用于横向平移镜头，通常保持 `fromY/toY` 与 `fromZ/toZ` 接近，只改变 X 或横向坐标。
 - `PEDESTAL`：相机固定在 `centerX/centerZ`，从 `fromHeight` 升降到 `toHeight`，朝向由 `rotX/rotY` 固定；适合垂直升起、下降展示场景高度关系。
 - `PAN_TILT`：相机位置固定在 `posX/posY/posZ`，只在 `startPan/endPan` 和 `startTilt/endTilt` 之间旋转；适合扫视平台或从一侧转向另一侧。
-- `PATH`：相机按 `keyframes` 的 `t` 时间点在多段位置和旋转之间插值；适合复杂路径、绕行、抬升再落下等组合镜头。
+- `PATH`：相机按 `keyframes` 的 `t` 时间点在多段位置和旋转之间插值；适合复杂路径、绕行、抬升再落下等组合镜头。段内为直线，关键帧处速度会突变。
+- `SPLINE`：关键帧格式与 `PATH` 完全一致（改模板名即可平滑升级），但位置走 Catmull-Rom 平滑曲线并按弧长重参数化实现匀速，关键帧处无速度突变。`orientMode` 可选 `keyframe`（按关键帧姿态插值）或 `tangent`（相机始终朝向路径切线前方）。
+
+对比 `PATH` 与 `SPLINE` 最直观的方式：
+
+```text
+/livehelper eval <clipId> 0 20
+```
+
+输出的 `step` 是相邻采样点之间的世界距离：`SPLINE` 基本均匀，`PATH` 在关键帧处会出现突变。
 
 转场观察重点：
 
