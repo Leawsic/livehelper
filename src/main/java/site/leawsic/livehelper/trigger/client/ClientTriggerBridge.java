@@ -237,8 +237,10 @@ public final class ClientTriggerBridge {
             }
             return;
         }
-        LiveHelper.LOGGER.info("Trigger '{}' ({}) fired -> manager #{}",
-            rule.name(), rule.type(), managerId);
-        StreamManager.INSTANCE.start(managerId);
+        // 用 cutTo 而不是 start：触发器要做的是「切过去播一小段」，播完自动回常驻机位。
+        boolean asCue = StreamManager.INSTANCE.cutTo(managerId);
+        LiveHelper.LOGGER.info("Trigger '{}' ({}) -> manager #{}{}",
+            rule.name(), rule.type(), managerId,
+            asCue ? " (cue, will auto-return)" : " (started as base)");
     }
 }

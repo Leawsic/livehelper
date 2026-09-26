@@ -24,6 +24,8 @@ public class StreamInstance implements AutoCloseable {
     private boolean framePrepared;
     private long lastRenderNs;
     private List<StreamInstance> predecessors;
+    /** 切机位期间的暂停：可恢复，且时间线从原处继续。区别于 {@link #suspend()} 的彻底让位。 */
+    private boolean pausedForCue;
 
     /** 最后一帧通过消毒的相机参数；单帧异常时回退到这里，避免 NaN 污染整段推流。 */
     private FrameCommand lastGoodFrame;
@@ -45,9 +47,57 @@ public class StreamInstance implements AutoCloseable {
     /**
      * 挂起实例：停止后续帧调度，但保留 persistent context 和 Spout sender，
      * 直至接管它的后继实例完成首帧发送。用于切换 Manager 时避免黑屏。
+     *
+     * <p>这是<b>不可恢复</b>的让位：交接完成后调用方会把它关闭。切机位场景请用
+     * {@link #pauseForCue()} / {@link #resumeFromCue()}。
      */
     public void suspend() {
         stopped = true;
+        pausedForCue = false;
+    }
+
+    /**
+     * 切机位期间暂停：保留 sender 与最后一帧，等 cue 播完再恢复。
+     *
+     * <p>与 {@link #suspend()} 的关键差别是时间线被冻结——常驻机位恢复后从暂停处继续，
+     * 而不是跳到「暂停了多久」之后的位置。对循环的全景机位来说这才是想要的语义。
+     */
+    public void pauseForCue() {
+        if (stopped) return;
+        stopped = true;
+        pausedForCue = true;
+        framePrepared = false;
+        engine.pauseClock();
+    }
+
+    /**
+     * 从切机位暂停中恢复，并立刻把最后一帧推回渲染上下文。
+     *
+     * <p>之所以要补这一下：关闭 cue 时 {@link #close()} 会清空 persistent context，
+     * 若等到下一次 tick 才产出新帧，中间会闪一下玩家视角。
+     */
+    public void resumeFromCue() {
+        if (!pausedForCue) return;
+        engine.resumeClock();
+        stopped = false;
+        pausedForCue = false;
+        framePrepared = false;
+        lastRenderNs = System.nanoTime() - frameIntervalNs;
+
+        Minecraft mc = Minecraft.getInstance();
+        if (lastGoodFrame != null && mc.level != null && mc.getWindow() != null) {
+            ActiveRenderContext.setPersistent(lastGoodFrame,
+                mc.getWindow().getWidth(), mc.getWindow().getHeight(), config.renderDistance());
+        }
+    }
+
+    public boolean isPausedForCue() {
+        return pausedForCue;
+    }
+
+    /** 时间线是否已走完（未开启循环）。切机位据此自动返回常驻机位。 */
+    public boolean isTimelineFinished() {
+        return engine.isFinished();
     }
 
     /**
@@ -100,6 +150,7 @@ public class StreamInstance implements AutoCloseable {
 
     private void closeAfterHandoff() {
         stopped = true;
+        pausedForCue = false;
         lastGoodFrame = null;
         spoutSender.close();
         if (predecessors != null) {
@@ -123,6 +174,7 @@ public class StreamInstance implements AutoCloseable {
     @Override
     public void close() {
         stopped = true;
+        pausedForCue = false;
         lastGoodFrame = null;
         ActiveRenderContext.clearPersistent();
         spoutSender.close();

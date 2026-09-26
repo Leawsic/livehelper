@@ -103,6 +103,18 @@ public final class LiveHelperCommands {
         LiteralArgumentBuilder<FabricClientCommandSource> root = literal("trigger");
 
         root.then(literal("list").executes(c -> listTriggers(c.getSource())));
+        root.then(literal("back").executes(c -> {
+            int cue = StreamManager.INSTANCE.getCueManagerId();
+            int base = StreamManager.INSTANCE.getBaseManagerId();
+            if (cue <= 0) {
+                send(c.getSource(), "当前没有切机位可返回。");
+                return 0;
+            }
+            // 必须在 returnToBase 之前取 cue，因为它返回后就会被清空。
+            StreamManager.INSTANCE.returnToBase();
+            send(c.getSource(), "已结束切机位 #" + cue + "，返回常驻机位 #" + base);
+            return cue;
+        }));
 
         RequiredArgumentBuilder<FabricClientCommandSource, String> addType =
             argument("type", StringArgumentType.word());
@@ -202,9 +214,12 @@ public final class LiveHelperCommands {
             send(source, "目标 Manager 不存在: #" + rule.targetManager());
             return 0;
         }
-        StreamManager.INSTANCE.start(rule.targetManager());
-        send(source, "已按触发规则 #" + id + " 启动 manager #" + rule.targetManager()
-            + "（" + manager.name() + "）；用 /livehelper stop " + rule.targetManager() + " 停止。");
+        boolean asCue = StreamManager.INSTANCE.cutTo(rule.targetManager());
+        send(source, asCue
+            ? "已按触发规则 #" + id + " 切到 manager #" + rule.targetManager() + "（" + manager.name()
+                + "）；若该 Manager 未开启循环，播完会自动回常驻机位 #" + StreamManager.INSTANCE.getBaseManagerId() + "。"
+            : "已按触发规则 #" + id + " 启动 manager #" + rule.targetManager() + "（" + manager.name()
+                + "）；当前没有可返回的常驻机位，已按常驻方式启动。");
         return id;
     }
 
@@ -324,7 +339,18 @@ public final class LiveHelperCommands {
         Set<Integer> activeIds = StreamManager.INSTANCE.getActiveStreamIds();
         send(source, "LiveHelper: " + storage.getAllClips().size() + " clips, "
             + storage.getAllManagers().size() + " managers, active=" + activeIds);
+        int base = StreamManager.INSTANCE.getBaseManagerId();
+        int cue = StreamManager.INSTANCE.getCueManagerId();
+        if (base > 0 || cue > 0) {
+            send(source, "机位: 常驻=" + (base > 0 ? describeManager(base) : "(无)")
+                + " | 切机位=" + (cue > 0 ? describeManager(cue) : "(无)"));
+        }
         return activeIds.size();
+    }
+
+    private static String describeManager(int managerId) {
+        Manager manager = StorageManager.getInstance().getManager(managerId);
+        return manager == null ? "#" + managerId + "(缺失)" : "#" + managerId + " " + manager.name();
     }
 
     private static int openWebUi(FabricClientCommandSource source) {

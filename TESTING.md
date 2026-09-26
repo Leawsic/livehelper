@@ -1,0 +1,146 @@
+# LiveHelper 验证流程
+
+从零验证构建、加载、Web UI、API、数据持久化与 OBS Spout 输出。README 只保留功能与用法，这里放逐条验证步骤。
+
+## 1. 构建验证
+
+```bash
+./gradlew clean build
+```
+
+预期 `BUILD SUCCESSFUL`，产物位于 `build/libs/livehelper-<版本>.jar`。
+
+## 2. 启动开发客户端
+
+```bash
+./gradlew runClient
+```
+
+预期：Minecraft 1.20.1 客户端启动，日志出现 LiveHelper 初始化信息，API server 显示端口 `23512` 已启动，浏览器自动打开 Web UI。
+
+## 3. 进入世界
+
+创建/进入任意世界。预期客户端不崩溃，无活跃 Manager 时游戏行为正常。
+
+## 4. 验证 Web UI
+
+浏览器打开 `http://localhost:23512`，预期页面正常加载、可切换 `总览 / Clips / Managers / 触发器`、控制台无明显 JS 错误。
+
+## 5. 验证 API
+
+```bash
+curl http://localhost:23512/api/templates
+curl http://localhost:23512/api/trigger-schema
+curl http://localhost:23512/api/clips
+curl http://localhost:23512/api/managers
+curl http://localhost:23512/api/triggers
+curl http://localhost:23512/api/pose
+```
+
+预期：`/api/templates` 与 `/api/trigger-schema` 返回带字段定义的 schema；`/api/clips`、`/api/managers`、`/api/triggers` 返回数组；`/api/pose` 在进入世界后返回 `x/y/z/qx/qy/qz/qw`。
+
+## 6. 创建测试 Clip
+
+Web UI 新建一个 ORBIT Clip（`duration: 10000`）：
+
+```json
+{
+  "targetX": 0, "targetY": 70, "targetZ": 0,
+  "radius": 10, "speed": 1, "startAngle": 0, "elevation": 10, "fov": 70
+}
+```
+
+或用 curl：
+
+```bash
+curl -X POST http://localhost:23512/api/clips ^
+  -H "Content-Type: application/json" ^
+  -d "{\"id\":0,\"name\":\"Orbit Test\",\"duration\":10000,\"template\":\"ORBIT\",\"params\":{\"targetX\":0,\"targetY\":70,\"targetZ\":0,\"radius\":10,\"speed\":1,\"startAngle\":0,\"elevation\":10,\"fov\":70}}"
+```
+
+预期返回 `{"id": ...}`，Web UI 列表出现新 Clip。
+
+## 7. 创建测试 Manager
+
+假设上一步 Clip ID 为 `1`：
+
+```bash
+curl -X POST http://localhost:23512/api/managers ^
+  -H "Content-Type: application/json" ^
+  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0,\"transitionDuration\":0,\"transitionEasing\":\"linear\"}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12,\"loop\":true,\"locked\":false}"
+```
+
+预期返回 Manager ID。
+
+## 8. 配置 OBS
+
+1. 启动 OBS Studio 并确认已安装 Spout2 Capture 插件
+2. 添加来源 `Spout2 Capture`
+3. Sender 名称选 `LiveHelper-Main Stream`（若未出现，先执行下一步启动 Manager）
+
+## 9. 启动推流
+
+```bash
+curl -X POST http://localhost:23512/api/managers/1/start
+```
+
+预期：Minecraft 不崩溃；日志显示 Manager 已启动；OBS 出现 `LiveHelper-Main Stream` sender 并显示虚拟机位画面；本机视角同步跟随虚拟机位（当前实现接管主摄像机）。
+
+```bash
+curl http://localhost:23512/api/managers/1/status
+```
+
+预期 `{"status":"running"}`。
+
+## 10. 验证运镜效果
+
+各模板的运动方式与适用场景见 README「运镜模板」一节。要点：
+
+- 转场是**摄像机参数混合**，不是画面淡入淡出；OBS 中应看到机位平滑移动/旋转/FOV 变化。
+- 第一个 Clip 没有前一段，因此不会出现进入转场。
+- `STATIC_TRACK` 的目标丢失时镜头会**保持最后一帧并持续重找**，不会硬切回预设朝向——观察目标死亡瞬间是否平滑。
+- `PATH` 与 `SPLINE` 的匀速差异用命令直接验证：
+
+```text
+/livehelper eval <clipId> 0 20
+```
+
+`step` 为相邻采样点的世界距离：`SPLINE` 基本均匀，`PATH` 在关键帧处突变。
+
+## 11. 停止
+
+```bash
+curl -X POST http://localhost:23512/api/managers/1/stop
+```
+
+预期状态变为 `stopped`，资源释放，OBS 画面停止更新或 Sender 消失。
+
+## 12. 双机位（可选）
+
+1. 创建第二个 Clip 和 Manager，将需要并行保留的那个设为 `locked: true`
+2. 启动两个 Manager
+3. OBS 添加两个 Spout2 Capture 源
+
+预期出现 `LiveHelper-<A>` 与 `LiveHelper-<B>` 两个 sender，画面独立更新。未设 `locked` 的旧 Manager 在新 Manager 启动时自动停止。
+
+## 13. 触发器与切机位
+
+1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`）
+2. 建第二个**非循环** Manager 作为切机位片段
+3. 新建触发规则：类型如 `entity_kill` / `damage`，目标指向第二个 Manager
+4. 用 `/livehelper trigger id <id> test` 立即试切
+
+预期：
+
+- `/livehelper status` 显示 `常驻=#1 ... | 切机位=#2 ...`
+- 切过去的片段播完后**自动回到常驻机位 #1**（`loop: false` 是自动返回的前提；`loop: true` 的切机位会常驻直到下一次触发）
+- `/livehelper trigger back` 可立即结束当前切机位并返回
+- 没有常驻机位时，触发器会退化为常驻启动并在日志里提示一次
+
+## 14. 单元测试
+
+```bash
+./gradlew test --rerun-tasks --no-build-cache
+```
+
+> `gradle.properties` 里开启了 `org.gradle.caching=true`，不加 `--rerun-tasks --no-build-cache` 时 `:test` 会显示 `FROM-CACHE` 且不打印任何用例结果，容易误判为「0 个测试通过」。

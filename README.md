@@ -1,4 +1,4 @@
-# LiveHelper
+﻿# LiveHelper
 
 LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播辅助 Mod。
 
@@ -26,9 +26,33 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
 - 写入前静态校验（时长、必填参数、枚举取值、关键帧时间单调性）
 - 主摄像机接管式虚拟机位推流
 - Manager 时间线支持相邻 Clip 之间的摄像机转场，以及 `repeat` / `pingpong` 两种循环方式
+- 常驻机位 / 切机位双层机位模型：触发器是「切过去播一小段再回来」，不是「重播到手动停止」
 - 触发器：条件命中时自动把推流切到指定 Manager（自动导播），支持延迟与冷却
 - Spout2 DLL + JNA 发送主窗口 FBO 到 OBS
 - Stream 活跃时阻止失焦自动暂停，手动 ESC 暂停仍保留
+
+## 运镜模板
+
+| 模板 | 运动方式 | 适用场景 |
+|---|---|---|
+| `STATIC` | 位置、朝向、FOV 全程固定 | 稳定全景、特写、转场前后的停顿画面 |
+| `STATIC_TRACK` | 位置固定，每帧重新看向目标实体 | 拍摄移动中的玩家、生物、载具 |
+| `ORBIT` | 绕目标点做圆周运动并持续看向它 | 环绕展示、舞台旋转 || `DOLLY` | 从起点推进到终点，朝向随移动方向 | 推进、后拉、斜向穿行 |
+| `TRUCK` | 与 `DOLLY` 同逻辑，约定上只改横向坐标 | 横移跟拍 |
+| `PEDESTAL` | 固定 X/Z，仅在高度上升降 | 垂直升起、下降展示空间关系 |
+| `PAN_TILT` | 位置固定，仅在水平角/俯仰角间旋转 | 扫视平台、从一侧转向另一侧 |
+| `PATH` | 关键帧之间直线插值，段内缓动 | 折线路径；关键帧处速度会突变 |
+| `SPLINE` | Catmull-Rom 平滑曲线 + 弧长匀速 | 连续长镜头；关键帧处无速度突变 |
+
+`PATH` 与 `SPLINE` 的关键帧格式**完全一致**（`t` / `x` / `y` / `z` / `rx` / `ry` / `rz` / `fov`），已有配置改模板名即可平滑升级。`SPLINE` 的 `orientMode` 可选 `keyframe`（按关键帧姿态插值）或 `tangent`（始终朝向路径切线前方）。
+
+两者的匀速差异可以直接用命令量化：
+
+```text
+/livehelper eval <clipId> 0 20
+```
+
+输出的 `step` 是相邻采样点之间的世界距离：`SPLINE` 基本均匀，`PATH` 在关键帧处突变。
 
 ## 环境要求
 
@@ -105,7 +129,8 @@ http://localhost:23512
 | `/livehelper eval <clipId> [progress] [samples]` | 离线查看 Clip 在指定进度下的相机参数；`samples` > 1 时同时打印相邻采样点的世界距离 |
 | `/livehelper trigger list` | 列出所有触发规则 |
 | `/livehelper trigger add <type> <managerId> [名称]` | 新建触发规则 |
-| `/livehelper trigger id <id> enable \| disable \| remove \| test` | 启用 / 禁用 / 删除 / 立即试跑某条规则 |
+| `/livehelper trigger id <id> enable \| disable \| remove \| test` | 启用 / 禁用 / 删除 / 立即试切某条规则 |
+| `/livehelper trigger back` | 结束当前切机位，立即返回常驻机位 |
 | `/livehelper start <managerId>` | 启动指定 Manager 推流 |
 | `/livehelper stop <managerId>` | 停止指定 Manager 推流 |
 | `/livehelper stop-all` | 停止所有活跃 Manager |
@@ -294,265 +319,47 @@ Manager 级别字段：
 
 写入 `POST` / `PUT` Clip 时会先做静态校验，不通过返回 `400` 并附带错误列表（未知模板、非法缓动名、关键帧 `t` 非递增、FOV 越界等）。触发规则同样有校验。
 
-## 实际测试完整流程
+## 机位模型：常驻与切机位
 
-以下流程用于从零验证构建、加载、Web UI、API、数据持久化和 OBS Spout 输出。
+直播和录播脚本的根本差别在于「镜头要不要回来」。因此这里有两个不同的操作：
 
-### 1. 构建验证
+| 操作 | 语义 | 谁调用 |
+|---|---|---|
+| **常驻机位**（base） | 一直推流，直到手动停止或被新的常驻机位替换 | `/livehelper start` |
+| **切机位**（cue） | 临时接管镜头，**时间线播完自动回常驻机位** | 触发器、`/livehelper trigger id <id> test` |
 
-在项目根目录执行：
-
-```bash
-./gradlew clean build
-```
-
-预期结果：
+`/livehelper status` 会分别显示当前两者，例如：
 
 ```text
-BUILD SUCCESSFUL
+机位: 常驻=#1 Main Stream | 切机位=#2 Kill Cam
 ```
 
-确认产物存在：
+### 自动返回的前提
 
-```text
-build/libs/livehelper-1.0.0.jar
-```
+切机位用的是「时间线走完就回」，所以**切机位 Manager 应该关闭 `loop`**：
 
-### 2. 启动 Minecraft 客户端
+- `loop: false` → 播完自动返回常驻机位（推荐用于击杀特写、进区域镜头）
+- `loop: true` → 永不自动返回，会一直停在那个画面，直到下一次触发或手动 `/livehelper trigger back`
 
-执行：
+常驻机位反过来通常应开 `loop: true`，否则它自己会先走完。
 
-```bash
-./gradlew runClient
-```
+### 恢复时的行为
 
-预期：
+切机位期间常驻机位是**暂停**而不是销毁：时间线冻结在暂停处，恢复后从原处继续，不会跳到中间。因此循环的全景机位切回来时画面是连续的。
 
-- Minecraft 1.20.1 客户端正常启动
-- 日志中出现 LiveHelper 初始化信息
-- API server 日志显示端口 `23512` 已启动
+### 几种退化情况
 
-### 3. 进入单人世界或服务器
+| 情况 | 行为 |
+|---|---|
+| 没有常驻机位 | 切机位退化为常驻启动，**不会自动返回**（没有可回的目标），日志提示一次 |
+| 常驻机位是 `locked` | 那是「多机位并行推流、OBS 各占一个源」的语义，没有「当前画面是谁」可言，退化为普通启动 |
+| 切机位目标就是常驻机位 | 等价于结束当前切机位并返回 |
 
-创建/进入任意世界。
-
-预期：
-
-- 客户端不崩溃
-- 无活跃 Manager 时，游戏正常运行
-- FPS 和操作响应基本正常
-
-### 4. 验证 Web UI
-
-浏览器打开：
-
-```text
-http://localhost:23512
-```
-
-预期：
-
-- 页面正常加载
-- 可以切换 `总览 / Clips / Managers`
-- 控制台无明显 JS 错误
-
-### 5. 验证 API 基础接口
-
-可使用浏览器或 curl：
-
-```bash
-curl http://localhost:23512/api/templates
-curl http://localhost:23512/api/clips
-curl http://localhost:23512/api/managers
-curl http://localhost:23512/api/pose
-```
-
-预期：
-
-- `/api/templates` 返回模板列表
-- `/api/clips` 返回数组
-- `/api/managers` 返回数组
-- `/api/pose` 在玩家已进入世界后返回 `x/y/z/qx/qy/qz/qw`
-
-### 6. 创建测试 Clip
-
-通过 Web UI 创建一个 ORBIT Clip：
-
-- name: `Orbit Test`
-- duration: `10000`
-- template: `ORBIT`
-- params:
-
-```json
-{
-  "targetX": 0,
-  "targetY": 70,
-  "targetZ": 0,
-  "radius": 10,
-  "speed": 1,
-  "startAngle": 0,
-  "elevation": 10,
-  "fov": 70
-}
-```
-
-也可以用 curl：
-
-```bash
-curl -X POST http://localhost:23512/api/clips ^
-  -H "Content-Type: application/json" ^
-  -d "{\"id\":0,\"name\":\"Orbit Test\",\"duration\":10000,\"template\":\"ORBIT\",\"params\":{\"targetX\":0,\"targetY\":70,\"targetZ\":0,\"radius\":10,\"speed\":1,\"startAngle\":0,\"elevation\":10,\"fov\":70}}"
-```
-
-预期：
-
-- 返回 `{"id": ...}`
-- Web UI Clips 列表出现新 Clip
-
-### 7. 创建测试 Manager
-
-假设上一步创建出的 Clip ID 为 `1`。
-
-创建 Manager：
-
-- name: `Main Stream`
-- width: `1280`
-- height: `720`
-- fps: `30`
-- renderDistance: `12`
-- loop: `true`
-- locked: `false`
-- clips:
-
-```json
-[
-  {"clipId": 1, "startOffset": 0, "transitionDuration": 0, "transitionEasing": "linear"}
-]
-```
-
-curl 示例：
-
-```bash
-curl -X POST http://localhost:23512/api/managers ^
-  -H "Content-Type: application/json" ^
-  -d "{\"id\":0,\"name\":\"Main Stream\",\"clips\":[{\"clipId\":1,\"startOffset\":0,\"transitionDuration\":0,\"transitionEasing\":\"linear\"}],\"width\":1280,\"height\":720,\"fps\":30,\"renderDistance\":12,\"loop\":true,\"locked\":false}"
-```
-
-预期：
-
-- 返回 Manager ID
-- Web UI Managers 列表出现新 Manager
-
-### 8. 配置 OBS Spout2 Capture
-
-1. 启动 OBS Studio
-2. 确保已安装 Spout2 Capture 插件
-3. 添加来源：`Spout2 Capture`
-4. 准备选择 Sender 名称：
-
-```text
-LiveHelper-Main Stream
-```
-
-如果名称尚未出现，先执行下一步启动 Manager。
-
-### 9. 启动 Manager 推流
-
-通过 Web UI 点击 Manager 的 `Start`。
-
-或使用 curl，假设 Manager ID 为 `1`：
-
-```bash
-curl -X POST http://localhost:23512/api/managers/1/start
-```
-
-预期：
-
-- Minecraft 不崩溃
-- 日志显示 Manager 已启动
-- OBS 的 Spout2 Capture 中出现 `LiveHelper-Main Stream`
-- OBS 可看到 Minecraft 虚拟摄像机画面
-- 当前实现会接管主摄像机，因此推流活跃时本机 Minecraft 视角也会跟随虚拟机位
-
-### 10. 验证状态接口
-
-```bash
-curl http://localhost:23512/api/managers/1/status
-```
-
-预期：
-
-```json
-{"status":"running"}
-```
-
-### 11. 验证运镜效果
-
-观察 OBS 画面：
-
-- `STATIC`：相机位置、朝向和 FOV 全程固定，适合做稳定的全景、特写或转场前后停顿画面。
-- `STATIC_TRACK`：相机位置固定，但每帧重新看向目标实体眼睛位置；适合拍摄运动中的玩家、生物、载具或演出对象。
-- `ORBIT`：相机围绕 `targetX/targetY/targetZ` 做圆周运动，并持续看向目标点；`radius` 控制环绕距离，`speed` 控制 Clip 播放期间绕行圈数，`elevation` 控制仰角。
-- `DOLLY`：相机从 `fromX/fromY/fromZ` 移动到 `toX/toY/toZ`，朝向由移动方向决定；适合向前推进、后拉或斜向穿行镜头。
-- `TRUCK`：当前实现继承 `DOLLY`，参数和运动逻辑相同；约定上用于横向平移镜头，通常保持 `fromY/toY` 与 `fromZ/toZ` 接近，只改变 X 或横向坐标。
-- `PEDESTAL`：相机固定在 `centerX/centerZ`，从 `fromHeight` 升降到 `toHeight`，朝向由 `rotX/rotY` 固定；适合垂直升起、下降展示场景高度关系。
-- `PAN_TILT`：相机位置固定在 `posX/posY/posZ`，只在 `startPan/endPan` 和 `startTilt/endTilt` 之间旋转；适合扫视平台或从一侧转向另一侧。
-- `PATH`：相机按 `keyframes` 的 `t` 时间点在多段位置和旋转之间插值；适合复杂路径、绕行、抬升再落下等组合镜头。段内为直线，关键帧处速度会突变。
-- `SPLINE`：关键帧格式与 `PATH` 完全一致（改模板名即可平滑升级），但位置走 Catmull-Rom 平滑曲线并按弧长重参数化实现匀速，关键帧处无速度突变。`orientMode` 可选 `keyframe`（按关键帧姿态插值）或 `tangent`（相机始终朝向路径切线前方）。
-
-对比 `PATH` 与 `SPLINE` 最直观的方式：
-
-```text
-/livehelper eval <clipId> 0 20
-```
-
-输出的 `step` 是相邻采样点之间的世界距离：`SPLINE` 基本均匀，`PATH` 在关键帧处会出现突变。
-
-转场观察重点：
-
-- 进入某个 Clip 的前 `transitionDuration` 毫秒，会从上一个 Clip 的末帧混合到当前 Clip 的当前帧。
-- `linear` 速度恒定；`easeIn` 开始慢、后段快；`easeOut` 开始快、后段慢；`easeInOut` 两端慢、中间快。
-- 第一个 Clip 没有前一段，因此不会出现进入转场。
-- 当前转场是摄像机参数混合，不是画面淡入淡出；OBS 中应看到机位平滑移动/旋转/FOV 变化，而不是透明度变化。
-
-### 12. 停止 Manager
-
-Web UI 点击 `Stop`。
-
-或使用 curl：
-
-```bash
-curl -X POST http://localhost:23512/api/managers/1/stop
-```
-
-预期：
-
-- 状态变为 `stopped`
-- 资源释放
-- OBS 画面停止更新或 Sender 消失
-
-### 13. 双机位验证（可选）
-
-1. 创建第二个 Clip 和 Manager
-2. 将需要并行保留的 Manager 设置为 `locked: true`
-3. 启动两个 Manager
-4. OBS 添加两个 Spout2 Capture 源
-
-预期：
-
-- 出现两个 sender：
-
-```text
-LiveHelper-<Manager A Name>
-LiveHelper-<Manager B Name>
-```
-
-- 两个画面独立更新
-- 未设置 `locked` 的旧 Manager 会在新 Manager 启动时自动停止
+触发器连续命中不同片段时，切机位只保留一层（不做栈），新的切机位会顶掉上一个，返回目标始终是常驻机位。
 
 ## 触发器（自动导播）
 
-触发规则让推流在特定事件发生时**自动切到指定 Manager**，适合击杀切 kill cam、进区域切机位、受伤切特写这类直播节奏。规则在 Web UI 的「触发器」页配置，存于 `config/livehelper/triggers.json`。
+触发规则让推流在特定事件发生时**自动切到指定 Manager**（见上一节的机位模型），适合击杀切 kill cam、进区域切机位、受伤切特写这类直播节奏。规则在 Web UI 的「触发器」页配置，存于 `config/livehelper/triggers.json`。
 
 ### 支持的触发类型
 
@@ -595,9 +402,12 @@ LiveHelper-<Manager B Name>
 
 ## 注意事项
 
-- Spout/OBS 输出必须在 Windows + OBS + Spout2 Capture 环境中手动验证。
+- Spout/OBS 输出必须在 Windows + OBS + Spout2 Capture 环境中手动验证，完整步骤见 [TESTING.md](./TESTING.md)。
 - API 服务器绑定本机 `23512` 端口，如果端口被占用，Mod 会记录启动失败日志。
 - 所有渲染资源创建/销毁已调度到 Minecraft 主线程执行。
+- `rotZ` / 关键帧 `rz`（画面滚转）目前**尚未进入渲染链路**：`CameraSetup` 只应用 yaw 与 pitch，roll 会被丢弃。相关字段保留在格式中但暂不生效。
+- 源码含中文注释，构建依赖 `build.gradle` 里的 `options.encoding = 'UTF-8'`；若移除该项，javac 会回落到系统默认编码导致编译失败。
+- `gradle.properties` 开启了构建缓存，验证单测需加 `--rerun-tasks --no-build-cache`，否则 `:test` 显示 `FROM-CACHE` 且不打印结果。
 - 当前 Web UI 是轻量基础版，侧重可用性，不依赖 npm 或构建工具。
 
 ## License

@@ -23,7 +23,11 @@ import java.util.Map;
  */
 public class PlaybackEngine {
     private final Manager manager;
-    private final long startTimeNs;
+    private long startTimeNs;
+    /** 累计暂停时长。切机位期间常驻机位靠它让时间线从原处继续，而不是跳到中间。 */
+    private long pausedDurationNs;
+    /** 本次暂停的起点；0 表示当前未暂停。 */
+    private long pausedAtNs;
     private final Map<Integer, Clip> clipCache;
     /** 预计算产物（如 PATH/SPLINE 的关键帧与弧长表），按 clipId 缓存，避免逐帧重建。 */
     private final Map<Integer, Object> preparedCache = new HashMap<>();
@@ -59,7 +63,36 @@ public class PlaybackEngine {
     }
 
     public FrameCommand computeFrame() {
-        return computeFrameAt((System.nanoTime() - startTimeNs) / 1_000_000L);
+        return computeFrameAt(elapsedMs());
+    }
+
+    /** 时间线已走完且未开启循环。切机位据此自动返回常驻机位。 */
+    public boolean isFinished() {
+        if (manager.loop()) return false;
+        return elapsedMs() >= totalDuration();
+    }
+
+    /** 暂停时钟。期间 elapsedMs 冻结，恢复后从原处继续。 */
+    public void pauseClock() {
+        if (pausedAtNs == 0L) {
+            pausedAtNs = System.nanoTime();
+        }
+    }
+
+    public void resumeClock() {
+        if (pausedAtNs != 0L) {
+            pausedDurationNs += System.nanoTime() - pausedAtNs;
+            pausedAtNs = 0L;
+        }
+    }
+
+    public boolean isClockPaused() {
+        return pausedAtNs != 0L;
+    }
+
+    private long elapsedMs() {
+        long now = pausedAtNs != 0L ? pausedAtNs : System.nanoTime();
+        return (now - startTimeNs - pausedDurationNs) / 1_000_000L;
     }
 
     /** 按 Manager 时间线上的毫秒偏移求值，便于定点验证。 */
@@ -244,12 +277,6 @@ public class PlaybackEngine {
 
     private static float lerp(float from, float to, float amount) {
         return from + (to - from) * amount;
-    }
-
-    public boolean isFinished() {
-        long elapsedMs = (System.nanoTime() - startTimeNs) / 1_000_000L;
-        if (manager.loop()) return false;
-        return elapsedMs >= totalDuration();
     }
 
     private long totalDuration() {
