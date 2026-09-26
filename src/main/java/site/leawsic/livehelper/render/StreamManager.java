@@ -3,6 +3,7 @@ package site.leawsic.livehelper.render;
 import net.minecraft.client.Minecraft;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
+import site.leawsic.livehelper.engine.templates.StaticTrackTemplate;
 import site.leawsic.livehelper.model.Clip;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.storage.StorageManager;
@@ -127,6 +128,7 @@ public enum StreamManager {
                 activeStreams.remove(id);
             }
         }
+        StaticTrackTemplate.resetAllStates();
     }
 
     public boolean hasActive() {

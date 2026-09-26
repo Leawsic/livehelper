@@ -1,5 +1,7 @@
 package site.leawsic.livehelper.engine.templates;
 
+import site.leawsic.livehelper.util.MathUtil;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -16,6 +18,7 @@ public final class MotionTemplates {
         register("PEDESTAL", new PedestalTemplate());
         register("PAN_TILT", new PanTiltTemplate());
         register("PATH", new PathTemplate());
+        register("SPLINE", new SplineTemplate());
     }
 
     private MotionTemplates() {}
@@ -42,14 +45,11 @@ public final class MotionTemplates {
         return a + (b - a) * t;
     }
 
+    /**
+     * 缓动曲线转发到 {@link MathUtil#ease}，保持本类静态导入的调用点不变。
+     */
     public static float ease(float t, String type) {
-        if (type == null) type = "linear";
-        return switch (type) {
-            case "easeIn" -> t * t;
-            case "easeOut" -> t * (2 - t);
-            case "easeInOut" -> t < 0.5f ? 2f * t * t : -1f + (4f - 2f * t) * t;
-            default -> t;
-        };
+        return MathUtil.ease(t, type);
     }
 
     public static double p(Map<String, Object> params, String key, double def) {

@@ -25,6 +25,9 @@ public class StreamInstance implements AutoCloseable {
     private long lastRenderNs;
     private List<StreamInstance> predecessors;
 
+    /** 最后一帧通过消毒的相机参数；单帧异常时回退到这里，避免 NaN 污染整段推流。 */
+    private FrameCommand lastGoodFrame;
+
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
         this(managerId, manager, engine, List.of());
     }
@@ -57,11 +60,18 @@ public class StreamInstance implements AutoCloseable {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 
-        FrameCommand cmd = engine.computeFrame();
+        FrameCommand raw = engine.computeFrame();
+        FrameCommand cmd = PlaybackEngine.sanitize(raw, lastGoodFrame);
         if (cmd == null) {
+            // 无活跃片段：交回玩家视角，镜头不做任何接管。
             ActiveRenderContext.clearPersistent();
             return;
         }
+        if (cmd != raw) {
+            LiveHelper.LOGGER.warn("Manager {} produced an unusable frame ({}); reusing last valid camera state",
+                    managerId, describe(raw));
+        }
+        lastGoodFrame = cmd;
 
         int width = mc.getWindow().getWidth();
         int height = mc.getWindow().getHeight();
@@ -90,6 +100,7 @@ public class StreamInstance implements AutoCloseable {
 
     private void closeAfterHandoff() {
         stopped = true;
+        lastGoodFrame = null;
         spoutSender.close();
         if (predecessors != null) {
             for (StreamInstance p : predecessors) p.closeAfterHandoff();
@@ -97,9 +108,22 @@ public class StreamInstance implements AutoCloseable {
         }
     }
 
+    /** 定位不可用帧的成因，仅用于日志，不参与播放逻辑。 */
+    private static String describe(FrameCommand cmd) {
+        if (cmd == null) return "no active clip";
+        if (!Double.isFinite(cmd.x()) || !Double.isFinite(cmd.y()) || !Double.isFinite(cmd.z())) {
+            return "non-finite position";
+        }
+        float length = (float) Math.sqrt(cmd.qx() * cmd.qx() + cmd.qy() * cmd.qy()
+                + cmd.qz() * cmd.qz() + cmd.qw() * cmd.qw());
+        if (!Float.isFinite(length) || length < 1e-6f) return "degenerate quaternion";
+        return "out-of-range fov=" + cmd.fov();
+    }
+
     @Override
     public void close() {
         stopped = true;
+        lastGoodFrame = null;
         ActiveRenderContext.clearPersistent();
         spoutSender.close();
         if (predecessors != null) {
