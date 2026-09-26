@@ -3,12 +3,15 @@ package site.leawsic.livehelper;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import site.leawsic.livehelper.command.LiveHelperCommands;
 import site.leawsic.livehelper.server.ApiServer;
 import site.leawsic.livehelper.storage.StorageManager;
+import site.leawsic.livehelper.trigger.client.ClientTriggerBridge;
+import site.leawsic.livehelper.trigger.client.TriggerStore;
 
 import java.net.URI;
 
@@ -31,6 +34,10 @@ public class LiveHelper implements ClientModInitializer {
         }
 
         LiveHelperCommands.register();
+
+        ClientTriggerBridge.install();
+        ClientTriggerBridge.reload(TriggerStore.getInstance().getAll());
+        ClientTickEvents.END_CLIENT_TICK.register(ClientTriggerBridge::onClientTick);
 
         LOGGER.info("LiveHelper initialized!");
     }

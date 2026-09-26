@@ -6,8 +6,10 @@
     "client": [
         "CameraAccessor",
         "CameraMixin",
+        "ClientAdvancementsAccessor",
         "MinecraftAccessor",
-        "GameRendererMixin"
+        "GameRendererMixin",
+        "MultiPlayerGameModeMixin"
     ],
     "injectors": {
         "defaultRequire": 1
