@@ -11,7 +11,12 @@ const API = {
     stopManager: id => request(`/api/managers/${id}/stop`, {method: 'POST'}),
     getManagerStatus: id => request(`/api/managers/${id}/status`),
     getPose: () => request('/api/pose'),
-    getTemplates: () => request('/api/templates')
+    getTemplates: () => request('/api/templates'),
+    getTriggers: () => request('/api/triggers'),
+    getTriggerSchema: () => request('/api/trigger-schema'),
+    createTrigger: data => request('/api/triggers', jsonRequest('POST', data)),
+    updateTrigger: (id, data) => request(`/api/triggers/${id}`, jsonRequest('PUT', data)),
+    deleteTrigger: id => request(`/api/triggers/${id}`, {method: 'DELETE'})
 };
 
 /**
@@ -78,8 +83,42 @@ async function loadTemplateSchema() {
     }
 }
 
+/** 触发器条件 schema，结构与 templateSchema 同构，额外带 label。 */
+let triggerSchema = {};
+let triggerSchemaLoaded = false;
+
+async function loadTriggerSchema() {
+    try {
+        const payload = await API.getTriggerSchema();
+        triggerSchema = {};
+        (payload.types || []).forEach(entry => {
+            triggerSchema[entry.type] = {label: entry.label, fields: entry.fields || []};
+        });
+        triggerSchemaLoaded = true;
+        if (payload.missingSchema) {
+            console.warn('Trigger types without schema:', payload.missingSchema);
+        }
+    } catch (error) {
+        triggerSchemaLoaded = false;
+        console.error('Failed to load trigger schema', error);
+    }
+}
+
+function triggerTypeNames() {
+    return Object.keys(triggerSchema);
+}
+
+function triggerFields(type) {
+    return (triggerSchema[type] || {}).fields || [];
+}
+
+function triggerLabel(type) {
+    return (triggerSchema[type] || {}).label || type;
+}
+
 let clips = [];
 let managers = [];
+let triggers = [];
 let statuses = new Map();
 let worldState = {ready: false, pose: null};
 let refreshing = false;
@@ -104,8 +143,14 @@ async function refreshAll() {
     setBusy(true);
     try {
         if (!schemaLoaded) await loadTemplateSchema();
+        if (!triggerSchemaLoaded) await loadTriggerSchema();
         clips = await API.getClips();
         managers = await API.getManagers();
+        try {
+            triggers = await API.getTriggers();
+        } catch (_) {
+            triggers = [];
+        }
         try {
             worldState = {ready: true, pose: await API.getPose()};
         } catch (_) {
@@ -122,6 +167,7 @@ async function refreshAll() {
         renderOverview();
         renderClips();
         renderManagers();
+        renderTriggers();
     } catch (error) {
         toast(error.message, 'bad');
     } finally {
@@ -200,6 +246,149 @@ function renderClips() {
             </div>
         `));
     });
+}
+
+function renderTriggers() {
+    const root = byId('triggers-list');
+    root.innerHTML = '';
+    if (!triggerSchemaLoaded) {
+        root.innerHTML = '<div class="empty">未能读取触发器 schema，请确认游戏内 Mod 已加载后刷新页面。</div>';
+        return;
+    }
+    if (!triggers.length) {
+        root.innerHTML = '<div class="empty">暂无触发规则。条件命中时会把推流自动切到指定 Manager。</div>';
+        return;
+    }
+    triggers.forEach(rule => {
+        const manager = managers.find(m => m.id === rule.targetManager);
+        const managerLabel = manager ? manager.name : '(缺失)';
+        const badges = [
+            `<span class="badge">${escapeHtml(rule.type)}</span>`,
+            `<span class="badge">${escapeHtml(triggerLabel(rule.type))}</span>`,
+            `<span class="badge">delay ${rule.delayMs || 0}ms</span>`,
+            `<span class="badge">cooldown ${rule.cooldownMs || 0}ms</span>`
+        ];
+        if (rule.onEnter) badges.push('<span class="badge">仅进入时</span>');
+        if (rule.exitBuffer > 0) badges.push(`<span class="badge">缓冲 ${rule.exitBuffer}</span>`);
+        if (!rule.repeatable) badges.push('<span class="badge">一次性</span>');
+
+        root.appendChild(card(`
+            <h3>${escapeHtml(rule.name || `(规则 #${rule.id})`)}</h3>
+            <div class="badge-row">
+                <button class="badge id copy-badge" data-copy="${rule.id}" title="复制规则 ID">规则 #${rule.id}</button>
+                ${badges.join('')}
+                ${rule.enabled ? '' : '<span class="badge">已禁用</span>'}
+            </div>
+            <p class="help">命中后切到 Manager #${rule.targetManager} · ${escapeHtml(managerLabel)}</p>
+            <pre class="params">${escapeHtml(JSON.stringify(rule.conditions || {}, null, 2))}</pre>
+            <div class="card-actions">
+                <button data-edit-trigger="${rule.id}">编辑</button>
+                <button data-toggle-trigger="${rule.id}" data-enabled="${rule.enabled}">${rule.enabled ? '禁用' : '启用'}</button>
+                <button class="danger" data-delete-trigger="${rule.id}">删除</button>
+            </div>
+        `));
+    });
+}
+
+function openTriggerEditor(rule = null) {
+    const isEdit = !!rule;
+    const data = clone(rule || {
+        name: '', type: triggerTypeNames()[0] || 'damage', conditions: {},
+        targetManager: managers[0]?.id || 1, enabled: true, repeatable: true,
+        delayMs: 0, cooldownMs: 0, onEnter: false, exitBuffer: 0
+    });
+    byId('editor-title').textContent = isEdit ? `编辑触发规则 #${data.id}` : '新建触发规则';
+    byId('editor-fields').innerHTML = `
+        <div class="form-grid">
+            <label>名称<input data-field="name" value="${escapeAttr(data.name)}" placeholder="例如 Boss 击杀切 kill cam"></label>
+            <label>类型<select data-field="type">${triggerTypeNames().map(t => `
+                <option value="${t}" ${t === data.type ? 'selected' : ''}>${escapeHtml(t)} · ${escapeHtml(triggerLabel(t))}</option>`).join('')}</select></label>
+            <label class="full">目标 Manager<select data-field="targetManager">${managers.map(m => `
+                <option value="${m.id}" ${m.id === data.targetManager ? 'selected' : ''}>#${m.id} ${escapeHtml(m.name)}</option>`).join('')}</select></label>
+            <label>延迟(ms)<input data-field="delayMs" type="number" min="0" step="50" value="${data.delayMs || 0}"></label>
+            <label>冷却(ms)<input data-field="cooldownMs" type="number" min="0" step="100" value="${data.cooldownMs || 0}"></label>
+            <label class="checkline"><input data-field="enabled" type="checkbox" ${data.enabled !== false ? 'checked' : ''}>启用</label>
+            <label class="checkline"><input data-field="repeatable" type="checkbox" ${data.repeatable !== false ? 'checked' : ''}>可重复触发</label>
+            <label class="checkline"><input data-field="onEnter" type="checkbox" ${data.onEnter ? 'checked' : ''}>仅进入区域时触发</label>
+            <label>离开缓冲(格)<input data-field="exitBuffer" type="number" min="0" step="0.5" value="${data.exitBuffer || 0}"></label>
+            <div id="trigger-conditions" class="full"></div>
+        </div>
+    `;
+
+    const typeSelect = qs('[data-field="type"]');
+    const renderConditions = () => {
+        renderTriggerConditions(typeSelect.value, data.conditions || {});
+    };
+    typeSelect.addEventListener('change', renderConditions);
+    renderConditions();
+
+    showEditor(async () => {
+        const payload = {
+            id: isEdit ? data.id : 0,
+            name: val('[data-field="name"]') || '(未命名)',
+            type: val('[data-field="type"]'),
+            conditions: collectTriggerConditions(),
+            targetManager: positiveNumber('[data-field="targetManager"]', 1),
+            enabled: checked('[data-field="enabled"]'),
+            repeatable: checked('[data-field="repeatable"]'),
+            delayMs: positiveNumber('[data-field="delayMs"]', 0),
+            cooldownMs: positiveNumber('[data-field="cooldownMs"]', 0),
+            onEnter: checked('[data-field="onEnter"]'),
+            exitBuffer: Number(val('[data-field="exitBuffer"]')) || 0
+        };
+        if (isEdit) await API.updateTrigger(data.id, payload);
+        else await API.createTrigger(payload);
+        toast('触发规则已保存', 'good');
+        await refreshAll();
+    });
+}
+
+/** 条件表单完全由 trigger-schema 驱动，新增触发类型无需改前端。 */
+function renderTriggerConditions(type, conditions) {
+    const root = byId('trigger-conditions');
+    const fields = triggerFields(type);
+    if (!fields.length) {
+        root.innerHTML = '<p class="help">该触发类型没有可配置条件，命中即触发。</p>';
+        return;
+    }
+    root.innerHTML = `<div class="form-grid">${fields.map(field => {
+        const value = conditions[field.key] !== undefined && conditions[field.key] !== null
+            ? conditions[field.key] : (field.def !== undefined ? field.def : '');
+        const head = `<span class="field-title">${escapeHtml(field.label)}<small>${escapeHtml(field.key)}</small></span>`;
+        const foot = `<span class="help">${escapeHtml(field.help)}</span>`;
+        if (field.type === 'enum') {
+            const values = field.values || [];
+            return `<label title="${escapeAttr(field.help)}">${head}<select data-cond="${field.key}" data-cond-type="enum">${
+                values.map(v => `<option ${String(v) === String(value) ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')
+            }</select>${foot}</label>`;
+        }
+        if (field.type === 'boolean') {
+            return `<label class="checkline">${head}<input data-cond="${field.key}" data-cond-type="boolean" type="checkbox" ${
+                value ? 'checked' : ''}>${foot}</label>`;
+        }
+        if (field.type === 'number') {
+            return `<label title="${escapeAttr(field.help)}">${head}<input data-cond="${field.key}" data-cond-type="number" type="number" step="${
+                field.step || 0.1}" value="${escapeAttr(value)}">${foot}</label>`;
+        }
+        return `<label title="${escapeAttr(field.help)}">${head}<input data-cond="${field.key}" data-cond-type="string" value="${escapeAttr(value)}">${foot}</label>`;
+    }).join('')}</div>`;
+}
+
+function collectTriggerConditions() {
+    const conditions = {};
+    document.querySelectorAll('[data-cond]').forEach(input => {
+        const key = input.dataset.cond;
+        const type = input.dataset.condType || 'string';
+        if (type === 'boolean') {
+            conditions[key] = input.checked;
+        } else if (type === 'number') {
+            const n = Number(input.value);
+            if (Number.isFinite(n)) conditions[key] = n;
+        } else {
+            conditions[key] = input.value;
+        }
+    });
+    return conditions;
 }
 
 function renderManagers() {
@@ -748,6 +937,23 @@ document.addEventListener('click', async event => {
         if (target.dataset.poseAction) await applyPoseToParams(target.dataset.poseAction);
         if (target.id === 'new-clip') openClipEditor();
         if (target.id === 'new-manager') openManagerEditor();
+        if (target.id === 'new-trigger') openTriggerEditor();
+        if (target.dataset.editTrigger) openTriggerEditor(triggers.find(t => t.id === Number(target.dataset.editTrigger)));
+        if (target.dataset.toggleTrigger) {
+            const id = Number(target.dataset.toggleTrigger);
+            const enable = target.dataset.enabled !== 'true';
+            const current = triggers.find(t => t.id === id);
+            if (current) {
+                await API.updateTrigger(id, {...current, enabled: enable});
+                toast(enable ? '触发规则已启用' : '触发规则已禁用', 'good');
+                await refreshAll();
+            }
+        }
+        if (target.dataset.deleteTrigger && confirm('删除这个触发规则？')) {
+            await API.deleteTrigger(Number(target.dataset.deleteTrigger));
+            toast('触发规则已删除', 'good');
+            await refreshAll();
+        }
         if (target.dataset.editClip) openClipEditor(clips.find(c => c.id === Number(target.dataset.editClip)));
         if (target.dataset.editManager) openManagerEditor(managers.find(m => m.id === Number(target.dataset.editManager)));
         if (target.dataset.deleteClip && confirm('删除这个 Clip？')) {

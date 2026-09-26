@@ -26,6 +26,7 @@ LiveHelper 是一个面向 Minecraft Fabric 1.20.1 客户端的多机位直播�
 - 写入前静态校验（时长、必填参数、枚举取值、关键帧时间单调性）
 - 主摄像机接管式虚拟机位推流
 - Manager 时间线支持相邻 Clip 之间的摄像机转场，以及 `repeat` / `pingpong` 两种循环方式
+- 触发器：条件命中时自动把推流切到指定 Manager（自动导播），支持延迟与冷却
 - Spout2 DLL + JNA 发送主窗口 FBO 到 OBS
 - Stream 活跃时阻止失焦自动暂停，手动 ESC 暂停仍保留
 
@@ -102,6 +103,9 @@ http://localhost:23512
 | `/livehelper list managers` | 列出所有 Manager 的 ID、名称、时长和运行状态 |
 | `/livehelper validate <clipId>` | 对某个 Clip 跑一遍写入前校验，输出错误与警告 |
 | `/livehelper eval <clipId> [progress] [samples]` | 离线查看 Clip 在指定进度下的相机参数；`samples` > 1 时同时打印相邻采样点的世界距离 |
+| `/livehelper trigger list` | 列出所有触发规则 |
+| `/livehelper trigger add <type> <managerId> [名称]` | 新建触发规则 |
+| `/livehelper trigger id <id> enable \| disable \| remove \| test` | 启用 / 禁用 / 删除 / 立即试跑某条规则 |
 | `/livehelper start <managerId>` | 启动指定 Manager 推流 |
 | `/livehelper stop <managerId>` | 停止指定 Manager 推流 |
 | `/livehelper stop-all` | 停止所有活跃 Manager |
@@ -280,10 +284,15 @@ Manager 级别字段：
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/templates` | 获取模板列表**及其参数字段 schema**（Web UI 据此动态渲染表单） |
+| `GET` | `/api/triggers` | 获取触发规则列表 |
+| `POST` | `/api/triggers` | 新建触发规则 |
+| `PUT` | `/api/triggers/{id}` | 更新触发规则 |
+| `DELETE` | `/api/triggers/{id}` | 删除触发规则 |
+| `GET` | `/api/trigger-schema` | 获取触发类型的 conditions 字段 schema |
 | `GET` | `/api/pose` | 获取当前玩家位置与朝向四元数 |
 | `GET` | `/` | 打开 Web UI |
 
-写入 `POST` / `PUT` Clip 时会先做静态校验，不通过返回 `400` 并附带错误列表（未知模板、非法缓动名、关键帧 `t` 非递增、FOV 越界等）。
+写入 `POST` / `PUT` Clip 时会先做静态校验，不通过返回 `400` 并附带错误列表（未知模板、非法缓动名、关键帧 `t` 非递增、FOV 越界等）。触发规则同样有校验。
 
 ## 实际测试完整流程
 
@@ -540,6 +549,49 @@ LiveHelper-<Manager B Name>
 
 - 两个画面独立更新
 - 未设置 `locked` 的旧 Manager 会在新 Manager 启动时自动停止
+
+## 触发器（自动导播）
+
+触发规则让推流在特定事件发生时**自动切到指定 Manager**，适合击杀切 kill cam、进区域切机位、受伤切特写这类直播节奏。规则在 Web UI 的「触发器」页配置，存于 `config/livehelper/triggers.json`。
+
+### 支持的触发类型
+
+| 类型 | 说明 | 常用条件 |
+|---|---|---|
+| `entity_kill` | 击杀生物 | `target` 生物类型 |
+| `damage` | 自身受伤 | `min_damage` 最小伤害量 |
+| `entity_attack` | 攻击实体 | `target` |
+| `entity_interact` | 与实体交互 | `target`、`item` |
+| `block_interact` | 与方块交互 | `target` 方块、`item` |
+| `item_on_interact` | 持物交互 | `item`、`target`、`target_type` |
+| `item_use` / `item_consume` / `item_release` | 开始使用 / 用完 / 中途松手 | `item` |
+| `dimension_change` | 切换维度 | `dimension` |
+| `location` | 进入区域 | `position` + `radius`，或 `corner1` + `corner2` |
+| `advancement` | 获得进度 | `advancement` |
+| `xp` | 获得经验 | `level` 或 `total` |
+| `observation` | 注视目标 | `target`、`target_type` |
+
+标识写法：`zombie` 等价于 `minecraft:zombie`；`*` 与 `minecraft:*` 为通配；留空表示不限。空手交互把 `item` 留空即可。
+
+### 规则字段
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `targetManager` | 必填 | 命中后启动的 Manager id |
+| `enabled` | `true` | 是否启用 |
+| `repeatable` | `true` | 是否可重复触发；`false` 时命中一次即失效，直到重新加载配置 |
+| `delayMs` | `0` | 命中后延迟多久再切机位。击杀后稍等 0.3~0.5s 再给 kill cam 观感更好 |
+| `cooldownMs` | `0` | 两次命中的最小间隔，防止同一事件反复切镜 |
+| `onEnter` | `false` | 位置类：只在**进入**区域时触发，已在区域内不重复 |
+| `exitBuffer` | `0` | 位置类：离开原区域多少格后才算已离开，防止边界抖动反复触发 |
+
+`delayMs` 与 `cooldownMs` 的判定精度是 1 tick（50ms）。
+
+### 关于多人服务器
+
+判定完全基于**本地客户端**：受伤、升级、切维度、击杀等都从本地玩家状态读出，交互与攻击由客户端交互层捕获。因此多人服同样可用——推流画面本来就来自本机，只要主播这边看到的时机对，画面就是对的。
+
+其中击杀是近似的：客户端拿不到服务端判定结果，采用「我攻击过它 + 它随后死亡或从世界消失」。若目标在攻击后超过 5 秒才死，则不计为击杀。
 
 ## 注意事项
 

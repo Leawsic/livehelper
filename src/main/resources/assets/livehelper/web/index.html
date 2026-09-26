@@ -16,6 +16,7 @@
             <button data-tab="overview" class="active">总览</button>
             <button data-tab="clips">Clips</button>
             <button data-tab="managers">Managers</button>
+            <button data-tab="triggers">触发器</button>
         </nav>
     </header>
 
@@ -53,6 +54,18 @@
                 <button id="new-manager" class="primary">新建 Manager</button>
             </div>
             <div id="managers-list" class="grid"></div>
+        </section>
+
+        <section id="triggers" class="tab">
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Auto Director</p>
+                    <h2>触发器</h2>
+                    <p class="help">条件命中时自动把推流切到指定 Manager。判定基于本地玩家视角，多人服同样可用。</p>
+                </div>
+                <button id="new-trigger" class="primary">新建触发规则</button>
+            </div>
+            <div id="triggers-list" class="grid"></div>
         </section>
     </main>
 
