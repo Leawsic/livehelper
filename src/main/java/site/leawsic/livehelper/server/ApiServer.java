@@ -13,13 +13,19 @@ import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.schema.ClipValidator;
 import site.leawsic.livehelper.schema.TemplateSchemas;
+import site.leawsic.livehelper.schema.TriggerSchemas;
+import site.leawsic.livehelper.schema.TriggerValidator;
 import site.leawsic.livehelper.storage.StorageManager;
+import site.leawsic.livehelper.trigger.TriggerRule;
+import site.leawsic.livehelper.trigger.client.TriggerStore;
 import site.leawsic.livehelper.util.AngleConvert;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.Executors;
 
 public final class ApiServer {
@@ -44,6 +50,8 @@ public final class ApiServer {
         server.createContext("/api/manager/", new ManagerDetailHandler("/api/manager/"));
         server.createContext("/api/pose", new PoseHandler());
         server.createContext("/api/templates", new TemplatesHandler());
+        server.createContext("/api/triggers", new TriggersHandler());
+        server.createContext("/api/trigger-schema", new TriggerSchemaHandler());
         server.createContext("/", new StaticFileHandler());
 
         server.start();
@@ -107,6 +115,75 @@ public final class ApiServer {
                 LiveHelper.LOGGER.warn("Templates without schema (UI will fall back to free-form): {}", missing);
             }
             sendJson(exchange, 200, TemplateSchemas.toJson());
+        }
+    }
+
+    static class TriggerSchemaHandler extends BaseRestHandler {
+        @Override
+        protected void handleInternal(HttpExchange exchange) throws IOException {
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "GET required");
+                return;
+            }
+            String missing = TriggerSchemas.missingSchemas();
+            if (!missing.isEmpty()) {
+                LiveHelper.LOGGER.warn("Trigger types without schema: {}", missing);
+            }
+            sendJson(exchange, 200, TriggerSchemas.toJson());
+        }
+    }
+
+    static class TriggersHandler extends BaseRestHandler {
+        @Override
+        protected void handleInternal(HttpExchange exchange) throws IOException {
+            try {
+                String method = exchange.getRequestMethod();
+                String path = exchange.getRequestURI().getPath();
+                TriggerStore store = TriggerStore.getInstance();
+
+                if ("GET".equals(method)) {
+                    sendJson(exchange, 200, GSON.toJson(store.getAll()));
+                } else if ("POST".equals(method)) {
+                    TriggerRule incoming = GSON.fromJson(readBody(exchange), TriggerRule.class);
+                    rejectInvalid(exchange, incoming);
+                    TriggerRule created = store.create(incoming);
+                    JsonObject res = new JsonObject();
+                    res.addProperty("id", created.id());
+                    sendJson(exchange, 201, res.toString());
+                } else if ("PUT".equals(method)) {
+                    int id = extractId(path, "/api/triggers/");
+                    TriggerRule incoming = GSON.fromJson(readBody(exchange), TriggerRule.class);
+                    rejectInvalid(exchange, incoming);
+                    store.update(id, incoming);
+                    sendJson(exchange, 200, "{}");
+                } else if ("DELETE".equals(method)) {
+                    int id = extractId(path, "/api/triggers/");
+                    store.delete(id);
+                    sendJson(exchange, 200, "{}");
+                } else {
+                    sendError(exchange, 405, "Method not allowed");
+                }
+            } catch (Exception e) {
+                sendError(exchange, 400, e.getMessage());
+            }
+        }
+
+        private void rejectInvalid(HttpExchange exchange, TriggerRule rule) throws IOException {
+            TriggerValidator.Result result = TriggerValidator.validate(rule, knownManagerIds());
+            for (String warning : result.warnings()) {
+                LiveHelper.LOGGER.warn("Trigger validation warning: {}", warning);
+            }
+            if (!result.ok()) {
+                sendError(exchange, 400, "invalid trigger: " + result.message());
+            }
+        }
+
+        private Set<Integer> knownManagerIds() {
+            Set<Integer> ids = new HashSet<>();
+            for (Manager manager : StorageManager.getInstance().getAllManagers()) {
+                ids.add(manager.id());
+            }
+            return ids;
         }
     }
 

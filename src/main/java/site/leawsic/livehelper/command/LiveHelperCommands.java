@@ -2,6 +2,7 @@ package site.leawsic.livehelper.command;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -21,9 +22,17 @@ import site.leawsic.livehelper.model.FrameCommand;
 import site.leawsic.livehelper.model.Manager;
 import site.leawsic.livehelper.render.StreamManager;
 import site.leawsic.livehelper.schema.ClipValidator;
+import site.leawsic.livehelper.schema.TriggerSchemas;
+import site.leawsic.livehelper.schema.TriggerValidator;
 import site.leawsic.livehelper.storage.StorageManager;
+import site.leawsic.livehelper.trigger.TriggerRule;
+import site.leawsic.livehelper.trigger.client.ClientTriggerBridge;
+import site.leawsic.livehelper.trigger.client.TriggerStore;
 
 import java.net.URI;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
@@ -47,6 +56,7 @@ public final class LiveHelperCommands {
             .then(literal("validate")
                 .then(argument("clipId", IntegerArgumentType.integer(1))
                     .executes(c -> validateClip(c.getSource(), IntegerArgumentType.getInteger(c, "clipId")))))
+            .then(triggerCommand())
             .then(evalCommand())
             .then(literal("list")
                 .then(literal("clips").executes(context -> listClips(context.getSource())))
@@ -81,6 +91,129 @@ public final class LiveHelperCommands {
         send(source, "Clip #" + clipId + " is OK"
             + (result.warnings().isEmpty() ? "" : " (" + result.warnings().size() + " warnings)"));
         return 1;
+    }
+
+    /**
+     * {@code /livehelper trigger} 子树：list / add / remove / enable / disable / test。
+     *
+     * <p>{@code test} 会立即把该规则的目标 Manager 启起来，用来在配规则阶段先确认机位本身没问题，
+     * 不用等到条件真的命中。
+     */
+    private static LiteralArgumentBuilder<FabricClientCommandSource> triggerCommand() {
+        LiteralArgumentBuilder<FabricClientCommandSource> root = literal("trigger");
+
+        root.then(literal("list").executes(c -> listTriggers(c.getSource())));
+
+        RequiredArgumentBuilder<FabricClientCommandSource, String> addType =
+            argument("type", StringArgumentType.word());
+        addType.then(argument("manager", IntegerArgumentType.integer(1))
+            .executes(c -> addTrigger(c.getSource(),
+                StringArgumentType.getString(c, "type"),
+                IntegerArgumentType.getInteger(c, "manager"), "", new LinkedHashMap<>(), 0L, 0L, true))
+            .then(argument("name", StringArgumentType.greedyString())
+                .executes(c -> addTrigger(c.getSource(),
+                    StringArgumentType.getString(c, "type"),
+                    IntegerArgumentType.getInteger(c, "manager"),
+                    StringArgumentType.getString(c, "name"), new LinkedHashMap<>(), 0L, 0L, true))));
+
+        RequiredArgumentBuilder<FabricClientCommandSource, Integer> idArg =
+            argument("id", IntegerArgumentType.integer(1));
+
+        LiteralArgumentBuilder<FabricClientCommandSource> idBranch = literal("id")
+            .then(literal("remove").then(idArg.executes(c -> removeTrigger(c.getSource(),
+                IntegerArgumentType.getInteger(c, "id")))))
+            .then(literal("enable").then(idArg.executes(c -> setTriggerEnabled(c.getSource(),
+                IntegerArgumentType.getInteger(c, "id"), true))))
+            .then(literal("disable").then(idArg.executes(c -> setTriggerEnabled(c.getSource(),
+                IntegerArgumentType.getInteger(c, "id"), false))))
+            .then(literal("test").then(idArg.executes(c -> testTrigger(c.getSource(),
+                IntegerArgumentType.getInteger(c, "id")))));
+
+        root.then(literal("add").then(addType));
+        root.then(literal("id").then(idBranch));
+        return root;
+    }
+
+    private static int listTriggers(FabricClientCommandSource source) {
+        var rules = TriggerStore.getInstance().getAll();
+        if (rules.isEmpty()) {
+            send(source, "没有触发规则。用 /livehelper trigger add <type> <managerId> [名称] 创建。");
+            return 0;
+        }
+        send(source, "已启用 " + ClientTriggerBridge.enabledRuleCount() + " / " + rules.size() + " 条规则：");
+        for (TriggerRule rule : rules) {
+            send(source, String.format("  #%d %-14s %-18s -> manager #%d  delay=%dms cooldown=%dms%s%s",
+                rule.id(), rule.name().isBlank() ? "(未命名)" : rule.name(),
+                rule.type() + " " + TriggerSchemas.labelOf(rule.type()),
+                rule.targetManager(), rule.delayMs(), rule.cooldownMs(),
+                rule.enabled() ? "" : "  [已禁用]",
+                rule.repeatable() ? "" : "  [一次性]"));
+        }
+        return rules.size();
+    }
+
+    private static int addTrigger(FabricClientCommandSource source, String type, int managerId,
+                                  String name, Map<String, Object> conditions, long delayMs,
+                                  long cooldownMs, boolean repeatable) {
+        TriggerRule candidate = new TriggerRule(0, name, type, conditions, managerId,
+            true, repeatable, delayMs, cooldownMs, false, 0.0);
+        TriggerValidator.Result result = TriggerValidator.validate(candidate, managerIds());
+        for (String warning : result.warnings()) {
+            send(source, "  [warn] " + warning);
+        }
+        if (!result.ok()) {
+            send(source, "创建失败：" + result.message());
+            return 0;
+        }
+        TriggerRule created = TriggerStore.getInstance().create(candidate);
+        send(source, "已创建触发规则 #" + created.id() + "（" + type + " -> manager #" + managerId + "）");
+        send(source, "提示：条件需要在 Web UI 的触发规则页里配置，或直接编辑 config/livehelper/triggers.json。");
+        return created.id();
+    }
+
+    private static int removeTrigger(FabricClientCommandSource source, int id) {
+        if (TriggerStore.getInstance().get(id) == null) {
+            send(source, "触发规则不存在: #" + id);
+            return 0;
+        }
+        TriggerStore.getInstance().delete(id);
+        send(source, "已删除触发规则 #" + id);
+        return id;
+    }
+
+    private static int setTriggerEnabled(FabricClientCommandSource source, int id, boolean enabled) {
+        if (TriggerStore.getInstance().get(id) == null) {
+            send(source, "触发规则不存在: #" + id);
+            return 0;
+        }
+        TriggerStore.getInstance().setEnabled(id, enabled);
+        send(source, "触发规则 #" + id + (enabled ? " 已启用" : " 已禁用"));
+        return id;
+    }
+
+    private static int testTrigger(FabricClientCommandSource source, int id) {
+        TriggerRule rule = TriggerStore.getInstance().get(id);
+        if (rule == null) {
+            send(source, "触发规则不存在: #" + id);
+            return 0;
+        }
+        Manager manager = StorageManager.getInstance().getManager(rule.targetManager());
+        if (manager == null) {
+            send(source, "目标 Manager 不存在: #" + rule.targetManager());
+            return 0;
+        }
+        StreamManager.INSTANCE.start(rule.targetManager());
+        send(source, "已按触发规则 #" + id + " 启动 manager #" + rule.targetManager()
+            + "（" + manager.name() + "）；用 /livehelper stop " + rule.targetManager() + " 停止。");
+        return id;
+    }
+
+    private static Set<Integer> managerIds() {
+        Set<Integer> ids = new HashSet<>();
+        for (Manager manager : StorageManager.getInstance().getAllManagers()) {
+            ids.add(manager.id());
+        }
+        return ids;
     }
 
     /**

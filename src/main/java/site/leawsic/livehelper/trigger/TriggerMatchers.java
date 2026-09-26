@@ -203,8 +203,38 @@ public final class TriggerMatchers {
         return value >= lo && value <= hi;
     }
 
-    /** 解析 {x,y,z} 形式的位置参数；非法返回 null。 */
+    /**
+     * 解析区域坐标，接受三种写法：
+     * <ul>
+     *   <li>{@code "x,y,z"} 字符串——Web UI 与 {@code triggers.json} 的规范写法</li>
+     *   <li>{@code {"x":..,"y":..,"z":..}} 对象——手写 JSON 时的便利写法</li>
+     *   <li>{@code [x, y, z]} 数组</li>
+     * </ul>
+     *
+     * <p>同时兼容「把 JSON 对象写进字符串」的情况，避免用户在 Web UI 里输入 JSON 文本时
+     * 得到一个莫名其妙的校验错误。非法输入一律返回 null，由调用方决定是报错还是忽略。
+     *
+     * <p>{@code TriggerValidator} 复用本方法，确保「校验通过」与「实际能匹配」不会漂移。
+     */
     public static double[] point(Object raw) {
+        if (raw instanceof String s) {
+            String trimmed = s.trim();
+            if (trimmed.isEmpty()) return null;
+            if (trimmed.startsWith("{")) {
+                return point(parseJsonObject(trimmed));
+            }
+            String[] parts = trimmed.split(",");
+            if (parts.length != 3) return null;
+            double[] out = new double[3];
+            for (int i = 0; i < 3; i++) {
+                try {
+                    out[i] = Double.parseDouble(parts[i].trim());
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+            return allFinite(out) ? out : null;
+        }
         if (raw instanceof Map<?, ?> map) {
             Object x = map.get("x");
             Object y = map.get("y");
@@ -213,6 +243,7 @@ public final class TriggerMatchers {
                 double[] out = {nx.doubleValue(), ny.doubleValue(), nz.doubleValue()};
                 return allFinite(out) ? out : null;
             }
+            return null;
         }
         if (raw instanceof List<?> list && list.size() >= 3
             && list.get(0) instanceof Number x && list.get(1) instanceof Number y && list.get(2) instanceof Number z) {
@@ -220,6 +251,23 @@ public final class TriggerMatchers {
             return allFinite(out) ? out : null;
         }
         return null;
+    }
+
+    private static Map<String, Object> parseJsonObject(String json) {
+        try {
+            var element = com.google.gson.JsonParser.parseString(json);
+            if (!element.isJsonObject()) return null;
+            Map<String, Object> map = new java.util.LinkedHashMap<>();
+            for (var entry : element.getAsJsonObject().entrySet()) {
+                var value = entry.getValue();
+                if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+                    map.put(entry.getKey(), value.getAsDouble());
+                }
+            }
+            return map;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static boolean allFinite(double[] values) {
