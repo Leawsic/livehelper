@@ -125,17 +125,20 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 
 ## 13. 触发器与切机位
 
-1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`）
-2. 建第二个**非循环** Manager 作为切机位片段
+1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`，且**不要设 `locked`**）
+2. 建第二个**关闭 `loop`** 的 Manager 作为切机位片段
 3. 新建触发规则：类型如 `entity_kill` / `damage`，目标指向第二个 Manager
 4. 用 `/livehelper trigger id <id> test` 立即试切
 
 预期：
 
 - `/livehelper status` 显示 `常驻=#1 ... | 切机位=#2 ...`
-- 切过去的片段播完后**自动回到常驻机位 #1**（`loop: false` 是自动返回的前提；`loop: true` 的切机位会常驻直到下一次触发）
+- 切过去的片段播完后**自动回到常驻机位 #1**
+- 切机位的 Spout sender 在片段结束时**消失**（OBS 的 Spout2 Capture 源列表里 `LiveHelper-<切机位名>` 应当不见），画面回到常驻机位
 - `/livehelper trigger back` 可立即结束当前切机位并返回
 - 没有常驻机位时，触发器会退化为常驻启动并在日志里提示一次
+
+如果观察到「两个 sender 同时存在」：常驻机位若设了 `locked`，切机位期间它的 sender 仍会注册（画面冻结在最后一帧）。把它取消勾选即可，切机位期间就只有切机位一个源。
 
 ## 14. 单元测试
 

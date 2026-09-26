@@ -158,12 +158,6 @@ public enum StreamManager {
     private synchronized boolean cutToOnMainThread(int managerId, Manager target) {
         Manager base = baseManagerId > 0 ? StorageManager.getInstance().getManager(baseManagerId) : null;
 
-        if (base != null && base.locked()) {
-            LiveHelper.LOGGER.info("cutTo: base manager #{} is locked (multi-cam); starting #{} as a base instead",
-                baseManagerId, managerId);
-            startOnMainThread(managerId);
-            return false;
-        }
         if (base == null) {
             if (!warnedCueWithoutBase) {
                 warnedCueWithoutBase = true;
@@ -180,6 +174,10 @@ public enum StreamManager {
 
         releaseCueOnMainThread();
 
+        // 常驻机位一律暂停，与它是否 locked 无关。
+        // locked 的含义是「别在我启动时把我停掉」，而暂停恰好满足这个意图——
+        // 早前这里对 locked 的常驻机位退化成 start()，会导致常驻机位根本没被暂停、
+        // 反而多出一个常驻流，OBS 于是同时看到两个 sender 并停在后者上。
         StreamInstance baseInstance = activeStreams.get(baseManagerId);
         if (baseInstance != null) {
             baseInstance.pauseForCue();
@@ -188,7 +186,7 @@ public enum StreamManager {
         // 常驻机位的最后一帧此刻仍在 persistent context 里，cue 首帧同 tick 覆盖，不闪黑。
         activeStreams.put(managerId, createInstance(managerId, target, List.of()));
         cueManagerId = managerId;
-        LiveHelper.LOGGER.info("Cut to manager #{} ({}), base #{}", managerId, target.name(), baseManagerId);
+        LiveHelper.LOGGER.info("Cut to manager #{} ({}), base #{} paused", managerId, target.name(), baseManagerId);
         return true;
     }
 
@@ -325,6 +323,9 @@ public enum StreamManager {
             cueManagerId = -1;
             return;
         }
+        // locked 的切机位不自动返回：它会作为额外推流源继续存在，语义与常驻机位一致。
+        Manager manager = StorageManager.getInstance().getManager(cue);
+        if (manager != null && manager.locked()) return;
         if (instance.isTimelineFinished()) {
             clearCueOnMainThread();
         }
