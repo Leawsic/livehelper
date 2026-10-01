@@ -32,9 +32,9 @@ public class GameRendererMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
         StreamManager.INSTANCE.prepareDueFrames();
-        if (ActiveRenderContext.isOffscreenActive()) {
-            minecraft.options.hideGui = true;
-        }
+        // 必须显式赋回 false：推流结束后镜头交还玩家，若只在接管时置 true，
+        // hideGui 会一直粘住，HUD 就再也回不来了。
+        minecraft.options.hideGui = ActiveRenderContext.isOffscreenActive();
     }
 
     @Inject(method = "render", at = @At("TAIL"))

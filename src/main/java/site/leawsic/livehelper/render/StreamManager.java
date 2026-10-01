@@ -203,6 +203,11 @@ public enum StreamManager {
             }
             if (managerId == cueManagerId) cueManagerId = -1;
             if (managerId == baseManagerId) baseManagerId = -1;
+            // 停掉的若是当前输出拥有者且已无其他机位，立刻交还镜头。
+            if (streams.isEmpty()) {
+                frameReady = false;
+                ActiveRenderContext.clearPersistent();
+            }
             LiveHelper.LOGGER.info("Stopped manager #{}", managerId);
         }, "stop");
     }
@@ -215,6 +220,9 @@ public enum StreamManager {
             streams.clear();
             cueManagerId = -1;
             baseManagerId = -1;
+            frameReady = false;
+            // 主动交还镜头，不依赖下一帧的 prepareDueFrames 去发现 streams 已空。
+            ActiveRenderContext.clearPersistent();
             closeSender();
             StaticTrackTemplate.resetAllStates();
         }, "stopAll");
@@ -237,7 +245,11 @@ public enum StreamManager {
 
     public void prepareDueFrames() {
         if (streams.isEmpty()) {
+            // 必须在没有拥有者时清空渲染上下文：它是全局静态的，
+            // 最后一个 Manager 停止后若不清掉，CameraSetup 会永远照着残留的最后一帧
+            // 接管镜头，表现为「推流已停但玩家视角仍被控制」。
             frameReady = false;
+            ActiveRenderContext.clearPersistent();
             return;
         }
         // 先结算切机位：可能关闭 cue 并恢复常驻机位，恢复后本轮就能补上它的画面，不闪帧。
@@ -247,6 +259,7 @@ public enum StreamManager {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) {
             frameReady = false;
+            ActiveRenderContext.clearPersistent();
             return;
         }
 

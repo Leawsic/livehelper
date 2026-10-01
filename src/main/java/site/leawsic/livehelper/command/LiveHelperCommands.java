@@ -56,6 +56,7 @@ public final class LiveHelperCommands {
             .then(literal("validate")
                 .then(argument("clipId", IntegerArgumentType.integer(1))
                     .executes(c -> validateClip(c.getSource(), IntegerArgumentType.getInteger(c, "clipId")))))
+            .then(cueCommand())
             .then(triggerCommand())
             .then(evalCommand())
             .then(literal("list")
@@ -103,18 +104,6 @@ public final class LiveHelperCommands {
         LiteralArgumentBuilder<FabricClientCommandSource> root = literal("trigger");
 
         root.then(literal("list").executes(c -> listTriggers(c.getSource())));
-        root.then(literal("back").executes(c -> {
-            int cue = StreamManager.INSTANCE.getCueManagerId();
-            int base = StreamManager.INSTANCE.getBaseManagerId();
-            if (cue <= 0) {
-                send(c.getSource(), "当前没有切机位可返回。");
-                return 0;
-            }
-            // 必须在 returnToBase 之前取 cue，因为它返回后就会被清空。
-            StreamManager.INSTANCE.returnToBase();
-            send(c.getSource(), "已结束切机位 #" + cue + "，返回常驻机位 #" + base);
-            return cue;
-        }));
 
         RequiredArgumentBuilder<FabricClientCommandSource, String> addType =
             argument("type", StringArgumentType.word());
@@ -334,6 +323,52 @@ public final class LiveHelperCommands {
         return samples;
     }
 
+    /**
+     * {@code /livehelper cue} 子树：手动切机位，与触发器共用同一套切机位语义。
+     *
+     * <p>放在顶层而不是 {@code trigger} 下，因为「切过去再回来」是机位行为，不是触发器行为——
+     * 配规则时用它来试机位，直播中也可以手动切。
+     */
+    private static LiteralArgumentBuilder<FabricClientCommandSource> cueCommand() {
+        RequiredArgumentBuilder<FabricClientCommandSource, Integer> managerArg =
+            argument("managerId", IntegerArgumentType.integer(1));
+
+        return literal("cue")
+            .then(managerArg.executes(c -> cutToManager(c.getSource(),
+                IntegerArgumentType.getInteger(c, "managerId"))))
+            .then(literal("back").executes(c -> {
+                int current = StreamManager.INSTANCE.getCueManagerId();
+                int base = StreamManager.INSTANCE.getBaseManagerId();
+                if (current <= 0) {
+                    send(c.getSource(), "当前没有切机位可返回。");
+                    return 0;
+                }
+                // 必须在 returnToBase 之前取 cue，因为它返回后就会被清空。
+                StreamManager.INSTANCE.returnToBase();
+                send(c.getSource(), "已结束切机位 #" + current + "，返回常驻机位 #" + base);
+                return current;
+            }));
+    }
+
+    private static int cutToManager(FabricClientCommandSource source, int managerId) {
+        Manager manager = StorageManager.getInstance().getManager(managerId);
+        if (manager == null) {
+            send(source, "Manager 不存在: #" + managerId);
+            return 0;
+        }
+        if (StreamManager.INSTANCE.getBaseManagerId() <= 0) {
+            send(source, "没有常驻机位，#1 之类的常驻机位需要先用 /livehelper start <id> 启动；"
+                + "否则切机位不会自动返回。");
+        }
+        boolean asCue = StreamManager.INSTANCE.cutTo(managerId);
+        send(source, asCue
+            ? "已切到 manager #" + managerId + "（" + manager.name() + "）；"
+                + (manager.loop() ? "该 Manager 开启了循环，不会自动返回，用 /livehelper cue back 手动返回。"
+                                 : "播完自动返回常驻机位 #" + StreamManager.INSTANCE.getBaseManagerId() + "。")
+            : "已把 manager #" + managerId + "（" + manager.name() + "）作为常驻机位启动。");
+        return managerId;
+    }
+
     private static int showStatus(FabricClientCommandSource source) {
         StorageManager storage = StorageManager.getInstance();
         Set<Integer> activeIds = StreamManager.INSTANCE.getActiveStreamIds();
@@ -341,9 +376,11 @@ public final class LiveHelperCommands {
             + storage.getAllManagers().size() + " managers, active=" + activeIds);
         int base = StreamManager.INSTANCE.getBaseManagerId();
         int cue = StreamManager.INSTANCE.getCueManagerId();
-        if (base > 0 || cue > 0) {
+        int owner = StreamManager.INSTANCE.getOutputOwnerId();
+        if (base > 0 || cue > 0 || !activeIds.isEmpty()) {
             send(source, "机位: 常驻=" + (base > 0 ? describeManager(base) : "(无)")
-                + " | 切机位=" + (cue > 0 ? describeManager(cue) : "(无)"));
+                + " | 切机位=" + (cue > 0 ? describeManager(cue) : "(无)")
+                + " | 正在推送=" + (owner > 0 ? describeManager(owner) : "(无，镜头归玩家)"));
         }
         return activeIds.size();
     }
@@ -441,21 +478,37 @@ public final class LiveHelperCommands {
             send(source, "Manager not found: #" + managerId);
             return 0;
         }
+        if (!worldState()) {
+            send(source, "玩家尚未进入世界，无法启动推流");
+            return 0;
+        }
         StreamManager.INSTANCE.start(managerId);
-        send(source, "Started manager #" + managerId + " " + manager.name());
+        send(source, "已启动常驻机位 #" + managerId + "（" + manager.name() + "）"
+            + (manager.locked() ? "（locked：手动启动其它 Manager 时不会被停掉）" : ""));
+        if (!manager.loop()) {
+            send(source, "提示：该 Manager 未开启循环，它会自己走完。触发器切机位请用开启循环的常驻机位。");
+        }
         return 1;
+    }
+
+    private static boolean worldState() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.level != null && mc.player != null;
     }
 
     private static int stopManager(FabricClientCommandSource source, int managerId) {
         StreamManager.INSTANCE.stop(managerId);
-        send(source, "Stopped manager #" + managerId);
+        boolean idle = !StreamManager.INSTANCE.hasActive();
+        send(source, idle
+            ? "已停止 manager #" + managerId + "，当前没有任何机位在推流，镜头已交还玩家。"
+            : "已停止 manager #" + managerId);
         return 1;
     }
 
     private static int stopAll(FabricClientCommandSource source) {
         int count = StreamManager.INSTANCE.getActiveStreamIds().size();
         StreamManager.INSTANCE.stopAll();
-        send(source, "Stopped " + count + " active manager(s).");
+        send(source, "已停止 " + count + " 个机位并释放 Spout sender，镜头已交还玩家。");
         return count;
     }
 

@@ -130,10 +130,11 @@ http://localhost:23512
 | `/livehelper trigger list` | 列出所有触发规则 |
 | `/livehelper trigger add <type> <managerId> [名称]` | 新建触发规则 |
 | `/livehelper trigger id <id> enable \| disable \| remove \| test` | 启用 / 禁用 / 删除 / 立即试切某条规则 |
-| `/livehelper trigger back` | 结束当前切机位，立即返回常驻机位 |
-| `/livehelper start <managerId>` | 启动指定 Manager 推流 |
-| `/livehelper stop <managerId>` | 停止指定 Manager 推流 |
-| `/livehelper stop-all` | 停止所有活跃 Manager |
+| `/livehelper start <managerId>` | 把该 Manager 启动为**常驻机位** |
+| `/livehelper stop <managerId>` | 停止指定 Manager |
+| `/livehelper stop-all` | 停止全部机位、释放 Spout sender，镜头交还玩家 |
+| `/livehelper cue <managerId>` | 手动**切机位**（与触发器同一套语义） |
+| `/livehelper cue back` | 结束当前切机位，立即返回常驻机位 |
 
 这些命令直接调用客户端内的 `StorageManager` 和 `StreamManager`，不依赖浏览器或 curl，适合调试坐标、快速重载配置和控制 OBS Sender。
 
@@ -326,7 +327,7 @@ Manager 级别字段：
 | 操作 | 语义 | 谁调用 |
 |---|---|---|
 | **常驻机位**（base） | 一直推流，直到手动停止或被新的常驻机位替换 | `/livehelper start` |
-| **切机位**（cue） | 临时接管镜头，**时间线播完自动回常驻机位** | 触发器、`/livehelper trigger id <id> test` |
+| **切机位**（cue） | 临时接管镜头，**时间线播完自动回常驻机位** | 触发器、`/livehelper cue` |
 
 `/livehelper status` 会分别显示当前两者，例如：
 
@@ -339,7 +340,7 @@ Manager 级别字段：
 切机位用的是「时间线走完就回」，所以**切机位 Manager 应该关闭 `loop`**：
 
 - `loop: false` → 播完自动返回常驻机位（推荐用于击杀特写、进区域镜头）
-- `loop: true` → 永不自动返回，会一直停在那个画面，直到下一次触发或手动 `/livehelper trigger back`
+- `loop: true` → 永不自动返回，会一直停在那个画面，直到下一次触发或手动 `/livehelper cue back`
 
 常驻机位反过来通常应开 `loop: true`，否则它自己会先走完。
 

@@ -131,16 +131,25 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`）
 2. 建第二个**关闭 `loop`** 的 Manager 作为切机位片段
 3. 新建触发规则：类型如 `entity_kill` / `damage`，目标指向第二个 Manager
-4. 用 `/livehelper trigger id <id> test` 立即试切
+4. 用 `/livehelper cue 2` 手动试切（不依赖触发器），或 `/livehelper trigger id <id> test` 试某条规则
 
 预期：
 
-- `/livehelper status` 显示 `常驻=#1 ... | 切机位=#2 ...`
-- 切过去的片段播完后**自动回到常驻机位 #1**，OBS 画面全程停在同一个 `LiveHelper` 源上、内容自动变化
-- `/livehelper trigger back` 可立即结束当前切机位并返回
+- `/livehelper status` 显示 `常驻=... | 切机位=... | 正在推送=...`
+- 切过去的片段播完后**自动回到常驻机位**，OBS 画面全程停在同一个 `LiveHelper` 源上、内容自动变化
+- `/livehelper cue back` 可立即结束当前切机位并返回
 - 没有常驻机位时，触发器会退化为常驻启动并在日志里提示一次
 
-## 14. 单元测试
+## 14. 停止后镜头必须交还玩家
+
+1. 启动推流，确认 MC 本机视角已被虚拟相机接管
+2. 执行 `/livehelper stop-all`
+
+预期：MC 视角**立即回到玩家实际视角**（不再被相机控制），OBS 的 `LiveHelper` sender 消失或画面停止更新，HUD 与第一人称手臂恢复显示。
+
+若停止后视角仍被相机锁住，说明渲染上下文没有被清干净——这是回归，请查看日志并反馈。
+
+## 15. 单元测试
 
 ```bash
 ./gradlew test --rerun-tasks --no-build-cache
