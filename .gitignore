@@ -33,6 +33,10 @@ bin/
 run/
 reference
 
+# 运行时日志：正常在 run/logs/，但若 IDE 把 runClient 的工作目录设成项目根目录，
+# Minecraft 的日志会落在根目录的 logs/ 下。无论哪种都不该提交。
+logs/
+
 # java
 
 hs_err_*.log

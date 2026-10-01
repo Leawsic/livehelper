@@ -20,21 +20,17 @@ import site.leawsic.livehelper.util.OffscreenTargetTracker;
 @Mixin(GameRenderer.class)
 public class GameRendererMixin {
     @Shadow @Final private Minecraft minecraft;
-    @Shadow private boolean renderHand;
     @Shadow private float zoom;
     @Shadow private float zoomX;
     @Shadow private float zoomY;
     @Shadow public native float getDepthFar();
 
-    @Unique
-    private static long livehelper$lastRedirectLogNs = 0L;
-
     @Inject(method = "render", at = @At("HEAD"))
     private void beforeRender(float tickDelta, long startNano, boolean tick, CallbackInfo ci) {
         StreamManager.INSTANCE.prepareDueFrames();
-        // 必须显式赋回 false：推流结束后镜头交还玩家，若只在接管时置 true，
-        // hideGui 会一直粘住，HUD 就再也回不来了。
-        minecraft.options.hideGui = ActiveRenderContext.isOffscreenActive();
+        // 这里刻意不去动 options.hideGui：它属于玩家的 F1 设置，而本模组接管的是主摄像机，
+        // 输出与玩家看到的是同一块 framebuffer，所以「OBS 里没有 HUD」必然意味着
+        // 「推流时自己也看不到 HUD」——包括刚执行完的命令回显。需要干净画面请自行按 F1。
     }
 
     @Inject(method = "render", at = @At("TAIL"))
@@ -62,13 +58,6 @@ public class GameRendererMixin {
         }
     }
 
-    @Inject(method = "renderLevel", at = @At("HEAD"))
-    private void beforeRenderLevel(float tickDelta, long startNano, PoseStack poseStack, CallbackInfo ci) {
-        if (ActiveRenderContext.isOffscreenActive()) {
-            this.renderHand = false;
-        }
-    }
-
     @Redirect(method = "renderLevel", at = @At(
         value = "INVOKE",
         target = "Lnet/minecraft/client/Camera;setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V"
@@ -80,10 +69,6 @@ public class GameRendererMixin {
         ActiveRenderContext.Context ctx = ActiveRenderContext.current();
         if (ctx != null) {
             CameraSetup.applyAfterSetup(camera, ctx.command());
-            long now = System.nanoTime();
-            if (now - livehelper$lastRedirectLogNs > 2_000_000_000L) {
-                livehelper$lastRedirectLogNs = now;
-            }
         }
     }
 
