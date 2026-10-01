@@ -1,15 +1,20 @@
 package site.leawsic.livehelper.render;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Minecraft;
 import site.leawsic.livehelper.LiveHelper;
 import site.leawsic.livehelper.engine.PlaybackEngine;
 import site.leawsic.livehelper.engine.templates.StaticTrackTemplate;
 import site.leawsic.livehelper.model.Clip;
 import site.leawsic.livehelper.model.Manager;
+import site.leawsic.livehelper.spout.SpoutSender;
 import site.leawsic.livehelper.storage.StorageManager;
+import site.leawsic.livehelper.trigger.TriggerRule;
+import site.leawsic.livehelper.util.ActiveRenderContext;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -19,128 +24,98 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * 推流调度：全流程只有<b>一个</b> Spout sender，Manager 只决定「往这条流里推什么画面」。
+ *
+ * <p>这是刻意的架构取舍。早期实现是「每个 Manager 一个 sender」，于是 OBS 那边会同时出现
+ * 多个 Spout sender，源选哪个就成了 OBS 侧的选择题：切机位瞬间新旧 sender 并存，
+ * 一旦选错或旧 sender 没被及时注销，画面就会一直停在错的机位上，而且没有任何代码层面的
+ * 办法可靠地纠正 OBS 的选择。
+ *
+ * <p>收束成单流之后，OBS 永远只看到一个固定名字的 sender，切换机位变成「改变推流内容」
+ * 而不是「切换 sender」，上述整类问题从根上消失。
+ *
+ * <p>机位模型：
+ * <ul>
+ *   <li><b>常驻机位</b>（base）：{@link #start} 手动启动，持续推流直到手动停止。</li>
+ *   <li><b>切机位</b>（cue）：触发器或 {@link #cutTo} 产生，时间线播完自动返回常驻机位。</li>
+ * </ul>
+ * 同一时刻只有「当前输出拥有者」会写入渲染上下文并推流，拥有者为 cue 优先、其次常驻机位。
+ */
 public enum StreamManager {
     INSTANCE;
 
-    private final Map<Integer, StreamInstance> activeStreams = new ConcurrentHashMap<>();
-
     /**
-     * 常驻机位：由 {@link #start} 手动启动，持续推流直到手动停止。
-     * <p>取值 -1 表示当前没有常驻机位。
+     * 唯一的 Spout sender 名字。OBS 的 Spout2 Capture 源应当固定选择这个名字。
+     * 改这个值会让 OBS 里已选的源失效，需要重新选一次。
      */
+    public static final String SENDER_NAME = "LiveHelper";
+
+    private final Map<Integer, StreamInstance> streams = new ConcurrentHashMap<>();
+
+    /** 常驻机位；-1 表示当前没有。 */
     private volatile int baseManagerId = -1;
-
-    /**
-     * 当前切机位（cue）：由触发器或 {@link #cutTo} 产生，时间线播完自动返回常驻机位。
-     * <p>取值 -1 表示当前没有切机位。同一时刻只允许一层，不做栈。
-     */
+    /** 当前切机位；-1 表示当前没有。 */
     private volatile int cueManagerId = -1;
 
-    private volatile boolean warnedCueWithoutBase = false;
+    /** 唯一的 Spout sender，懒创建。 */
+    private SpoutSender sender;
+    /** 本帧是否已产出可推送的画面。 */
+    private boolean frameReady;
+    private boolean warnedNoBase = false;
+    private boolean warnedMultipleRunning = false;
+
+    // ── 常驻机位 ─────────────────────────────────────────────
 
     public void start(int managerId) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.isSameThread()) {
-            startOnMainThread(managerId);
-            return;
-        }
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        mc.execute(() -> {
-            try {
-                startOnMainThread(managerId);
-                future.complete(null);
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-            }
-        });
-        try {
-            future.get(2, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            LiveHelper.LOGGER.warn("Start manager {} timed out", managerId);
-        } catch (CancellationException e) {
-            // ignored
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to start manager " + managerId, e);
-        }
+        runOnMainThread(() -> startOnMainThread(managerId), "start");
     }
 
     private synchronized void startOnMainThread(int managerId) {
-        if (activeStreams.containsKey(managerId)) {
-            LiveHelper.LOGGER.warn("Manager {} is already running", managerId);
+        if (streams.containsKey(managerId)) {
+            LiveHelper.LOGGER.warn("Manager #{} is already running", managerId);
             return;
         }
         Manager manager = StorageManager.getInstance().getManager(managerId);
         if (manager == null) {
             throw new IllegalArgumentException("Manager not found: " + managerId);
         }
-        // 手动启动即声明常驻机位：先释放任何切机位，避免 cue 悬着无处可回。
         releaseCueOnMainThread();
-        List<StreamInstance> predecessors = suspendUnlockedStreamsExcept(managerId);
-        activeStreams.put(managerId, createInstance(managerId, manager, predecessors));
+        stopUnlockedExcept(managerId);
+        warnIfMultipleRunning(managerId);
+        streams.put(managerId, new StreamInstance(managerId, manager, newEngine(manager)));
         baseManagerId = managerId;
-        LiveHelper.LOGGER.info("Started stream for manager: {}", manager.name());
+        LiveHelper.LOGGER.info("Started base manager #{} ({}), Spout sender '{}'",
+            managerId, manager.name(), SENDER_NAME);
     }
 
-    private StreamInstance createInstance(int managerId, Manager manager, List<StreamInstance> predecessors) {
-        Map<Integer, Clip> clipCache = new HashMap<>();
-        for (var slot : manager.clips()) {
-            Clip clip = StorageManager.getInstance().getClip(slot.clipId());
-            if (clip != null) clipCache.put(slot.clipId(), clip);
-        }
-        PlaybackEngine engine = new PlaybackEngine(manager, clipCache);
-        return new StreamInstance(managerId, manager, engine, predecessors);
-    }
-
-    private List<StreamInstance> suspendUnlockedStreamsExcept(int managerId) {
-        List<StreamInstance> suspended = new ArrayList<>();
-        for (int activeId : new ArrayList<>(activeStreams.keySet())) {
-            if (activeId == managerId) continue;
-            Manager activeManager = StorageManager.getInstance().getManager(activeId);
-            if (activeManager != null && activeManager.locked()) continue;
-            StreamInstance instance = activeStreams.remove(activeId);
-            if (instance == null) continue;
-            instance.suspend();
-            suspended.add(instance);
-            LiveHelper.LOGGER.info("Suspended unlocked manager {} before starting {}", activeId, managerId);
-        }
-        return suspended;
-    }
-
-    // ── 切机位（cue）──────────────────────────────────────────
+    // ── 切机位 ───────────────────────────────────────────────
 
     /**
      * 切到某个机位播一小段，播完自动返回常驻机位。触发器走这条路径。
      *
-     * <p>与 {@link #start} 的区别正是「切换」与「重播」的差别：start 之后该 Manager
-     * 会一直推流直到手动停止，而 cutTo 只是临时接管镜头。
+     * <p>与 {@link #start} 的区别正是「切换」与「重播」的差别：start 之后该 Manager 会一直
+     * 推流直到手动停止；cutTo 只是临时接管画面。
      *
-     * <p>三种退化情况：
-     * <ul>
-     *   <li>常驻机位是 locked——那是「多机位并行推流、OBS 里各占一个源」的语义，
-     *       没有「当前画面是谁」可言，因此退化为普通 start。</li>
-     *   <li>根本没有常驻机位——退化为普通 start，这样「只用触发器驱动」也能工作，
-     *       但镜头不会自动回来（没有可回的目标）。</li>
-     *   <li>切回常驻机位本身——等价于清除当前 cue。</li>
-     * </ul>
-     *
-     * @return 是否按「切机位」处理；false 表示退化成常驻启动
+     * @return 是否按「切机位」处理；false 表示退化成常驻启动（没有可返回的目标）
      */
     public boolean cutTo(int managerId) {
+        return cutToResult(managerId, "cutTo");
+    }
+
+    private boolean cutToResult(int managerId, String op) {
         if (managerId <= 0) return false;
         if (managerId == cueManagerId) return true;
-
         Manager target = StorageManager.getInstance().getManager(managerId);
         if (target == null) {
-            LiveHelper.LOGGER.warn("cutTo: manager #{} not found", managerId);
+            LiveHelper.LOGGER.warn("{}: manager #{} not found", op, managerId);
             return false;
         }
-
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.isSameThread()) {
+        if (Minecraft.getInstance().isSameThread()) {
             return cutToOnMainThread(managerId, target);
         }
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        mc.execute(() -> {
+        Minecraft.getInstance().execute(() -> {
             try {
                 future.complete(cutToOnMainThread(managerId, target));
             } catch (Exception e) {
@@ -150,19 +125,17 @@ public enum StreamManager {
         try {
             return future.get(2, TimeUnit.SECONDS);
         } catch (Exception e) {
-            LiveHelper.LOGGER.warn("cutTo manager {} timed out or failed", managerId, e);
+            LiveHelper.LOGGER.warn("{} manager #{} timed out or failed", op, managerId, e);
             return false;
         }
     }
 
     private synchronized boolean cutToOnMainThread(int managerId, Manager target) {
-        Manager base = baseManagerId > 0 ? StorageManager.getInstance().getManager(baseManagerId) : null;
-
-        if (base == null) {
-            if (!warnedCueWithoutBase) {
-                warnedCueWithoutBase = true;
-                LiveHelper.LOGGER.warn("cutTo: no base manager running; #{} becomes the base and will not auto-return. "
-                    + "Start a base with /livehelper start first to get auto-return.", managerId);
+        if (baseManagerId <= 0 || !streams.containsKey(baseManagerId)) {
+            if (!warnedNoBase) {
+                warnedNoBase = true;
+                LiveHelper.LOGGER.warn("No base manager running; manager #{} becomes the base and will not auto-return. "
+                    + "Run /livehelper start <id> first to get auto-return.", managerId);
             }
             startOnMainThread(managerId);
             return false;
@@ -174,17 +147,14 @@ public enum StreamManager {
 
         releaseCueOnMainThread();
 
-        // 常驻机位一律暂停，与它是否 locked 无关。
-        // locked 的含义是「别在我启动时把我停掉」，而暂停恰好满足这个意图——
-        // 早前这里对 locked 的常驻机位退化成 start()，会导致常驻机位根本没被暂停、
-        // 反而多出一个常驻流，OBS 于是同时看到两个 sender 并停在后者上。
-        StreamInstance baseInstance = activeStreams.get(baseManagerId);
-        if (baseInstance != null) {
-            baseInstance.pauseForCue();
+        // 常驻机位一律暂停，与其 locked 无关：locked 的含义是「别在我启动时把我停掉」，
+        // 而暂停恰好满足这个意图。早前对 locked 的常驻机位退化成 start()，导致常驻机位
+        // 根本没被暂停、反而多出一个常驻流。
+        StreamInstance base = streams.get(baseManagerId);
+        if (base != null) {
+            base.pauseForCue();
         }
-        // cue 不挂 predecessor：常驻机位要保持可恢复，而 predecessor 交接完成后会被关闭。
-        // 常驻机位的最后一帧此刻仍在 persistent context 里，cue 首帧同 tick 覆盖，不闪黑。
-        activeStreams.put(managerId, createInstance(managerId, target, List.of()));
+        streams.put(managerId, new StreamInstance(managerId, target, newEngine(target)));
         cueManagerId = managerId;
         LiveHelper.LOGGER.info("Cut to manager #{} ({}), base #{} paused", managerId, target.name(), baseManagerId);
         return true;
@@ -192,43 +162,164 @@ public enum StreamManager {
 
     /** 立即返回常驻机位。 */
     public void returnToBase() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.isSameThread()) {
-            clearCueOnMainThread();
-            return;
-        }
-        mc.execute(this::clearCueOnMainThread);
+        runOnMainThread(this::clearCueOnMainThread, "returnToBase");
     }
 
     private synchronized void clearCueOnMainThread() {
         if (cueManagerId <= 0) return;
         int returning = cueManagerId;
         cueManagerId = -1;
-
-        StreamInstance cue = activeStreams.remove(returning);
+        StreamInstance cue = streams.remove(returning);
         if (cue != null) {
-            cue.close();
+            cue.stop();
         }
-        StreamInstance base = activeStreams.get(baseManagerId);
+        StreamInstance base = streams.get(baseManagerId);
         if (base != null) {
-            // 先关 cue（会清空 context）再恢复 base（立刻补回最后一帧），中间不闪玩家视角。
             base.resumeFromCue();
             LiveHelper.LOGGER.info("Cue manager #{} ended; returned to base #{}", returning, baseManagerId);
         } else {
-            LiveHelper.LOGGER.info("Cue manager #{} ended; base #{} is gone, nothing to return to",
-                returning, baseManagerId);
+            LiveHelper.LOGGER.info("Cue manager #{} ended; base is gone, nothing to return to", returning);
             baseManagerId = -1;
         }
     }
 
-    /** 关闭当前 cue，不触碰常驻机位。 */
+    /** 关闭当前切机位，不触碰常驻机位。 */
     private void releaseCueOnMainThread() {
         if (cueManagerId <= 0) return;
-        StreamInstance cue = activeStreams.remove(cueManagerId);
+        StreamInstance cue = streams.remove(cueManagerId);
         cueManagerId = -1;
         if (cue != null) {
-            cue.close();
+            cue.stop();
         }
+    }
+
+    // ── 停止 ─────────────────────────────────────────────────
+
+    public void stop(int managerId) {
+        runOnMainThread(() -> {
+            StreamInstance instance = streams.remove(managerId);
+            if (instance != null) {
+                instance.stop();
+            }
+            if (managerId == cueManagerId) cueManagerId = -1;
+            if (managerId == baseManagerId) baseManagerId = -1;
+            LiveHelper.LOGGER.info("Stopped manager #{}", managerId);
+        }, "stop");
+    }
+
+    public void stopAll() {
+        runOnMainThread(() -> {
+            for (StreamInstance instance : new ArrayList<>(streams.values())) {
+                instance.stop();
+            }
+            streams.clear();
+            cueManagerId = -1;
+            baseManagerId = -1;
+            closeSender();
+            StaticTrackTemplate.resetAllStates();
+        }, "stopAll");
+    }
+
+    // ── 每帧 ─────────────────────────────────────────────────
+
+    /**
+     * 当前输出拥有者：切机位优先，其次常驻机位。
+     *
+     * <p>渲染上下文是全局唯一的，所以必须有明确的拥有者，否则多个实例会互相覆盖。
+     */
+    private int outputOwnerId() {
+        int cue = cueManagerId;
+        if (cue > 0 && streams.containsKey(cue)) return cue;
+        int base = baseManagerId;
+        if (base > 0 && streams.containsKey(base)) return base;
+        return -1;
+    }
+
+    public void prepareDueFrames() {
+        if (streams.isEmpty()) {
+            frameReady = false;
+            return;
+        }
+        // 先结算切机位：可能关闭 cue 并恢复常驻机位，恢复后本轮就能补上它的画面，不闪帧。
+        checkCueCompletion();
+
+        long nowNs = System.nanoTime();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) {
+            frameReady = false;
+            return;
+        }
+
+        int owner = outputOwnerId();
+        boolean ownerHasFrame = false;
+        for (Map.Entry<Integer, StreamInstance> entry : streams.entrySet()) {
+            FrameCommandHolder holder = poll(entry.getValue(), nowNs);
+            if (entry.getKey() != owner) continue;
+            if (holder.frame == null) continue;
+            ownerHasFrame = true;
+            ActiveRenderContext.setPersistent(holder.frame, holder.width, holder.height, holder.renderDistance);
+        }
+
+        if (ownerHasFrame) {
+            frameReady = true;
+        } else {
+            // 拥有者当前没有画面（时间线空档/已走完/被暂停）：交回玩家视角。
+            ActiveRenderContext.clearPersistent();
+            frameReady = false;
+        }
+    }
+
+    private record FrameCommandHolder(site.leawsic.livehelper.model.FrameCommand frame,
+                                      int width, int height, int renderDistance) {}
+
+    private FrameCommandHolder poll(StreamInstance instance, long nowNs) {
+        var frame = instance.pollFrame(nowNs);
+        if (frame == null) return new FrameCommandHolder(null, 0, 0, 0);
+        Minecraft mc = Minecraft.getInstance();
+        return new FrameCommandHolder(frame,
+            mc.getWindow().getWidth(), mc.getWindow().getHeight(), instance.renderDistance());
+    }
+
+    /**
+     * 切机位时间线走完（且未开启循环、未设 locked）就自动返回常驻机位。
+     */
+    private void checkCueCompletion() {
+        int cue = cueManagerId;
+        if (cue <= 0) return;
+        StreamInstance instance = streams.get(cue);
+        if (instance == null) {
+            cueManagerId = -1;
+            return;
+        }
+        Manager manager = StorageManager.getInstance().getManager(cue);
+        if (manager != null && manager.locked()) return;
+        if (instance.isTimelineFinished()) {
+            clearCueOnMainThread();
+        }
+    }
+
+    public void sendPreparedFrames() {
+        if (!frameReady || streams.isEmpty()) return;
+        try {
+            RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
+            sender().send(target.frameBufferId, target.width, target.height);
+        } catch (Exception e) {
+            LiveHelper.LOGGER.error("Failed to send Spout frame", e);
+        }
+    }
+
+    // ── 状态查询 ─────────────────────────────────────────────
+
+    public boolean hasActive() {
+        return !streams.isEmpty();
+    }
+
+    public StreamStatus getStatus(int managerId) {
+        return streams.containsKey(managerId) ? StreamStatus.RUNNING : StreamStatus.STOPPED;
+    }
+
+    public Set<Integer> getActiveStreamIds() {
+        return new HashSet<>(streams.keySet());
     }
 
     public int getBaseManagerId() {
@@ -239,16 +330,64 @@ public enum StreamManager {
         return cueManagerId;
     }
 
-    public void stop(int managerId) {
+    public int getOutputOwnerId() {
+        return outputOwnerId();
+    }
+
+    // ── 内部 ─────────────────────────────────────────────────
+
+    private PlaybackEngine newEngine(Manager manager) {
+        Map<Integer, Clip> clipCache = new HashMap<>();
+        for (var slot : manager.clips()) {
+            Clip clip = StorageManager.getInstance().getClip(slot.clipId());
+            if (clip != null) clipCache.put(slot.clipId(), clip);
+        }
+        return new PlaybackEngine(manager, clipCache);
+    }
+
+    private void stopUnlockedExcept(int keepManagerId) {
+        for (int id : new ArrayList<>(streams.keySet())) {
+            if (id == keepManagerId) continue;
+            Manager manager = StorageManager.getInstance().getManager(id);
+            if (manager != null && manager.locked()) continue;
+            StreamInstance instance = streams.remove(id);
+            if (instance != null) {
+                instance.stop();
+            }
+        }
+    }
+
+    private void warnIfMultipleRunning(int aboutToStart) {
+        if (warnedMultipleRunning || streams.size() < 1) return;
+        warnedMultipleRunning = true;
+        LiveHelper.LOGGER.warn("More than one manager is running. Spout output is now a single stream, so only the "
+            + "active camera (cut manager, else base) is sent; locked managers no longer produce separate OBS sources.");
+    }
+
+    private synchronized SpoutSender sender() {
+        if (sender == null) {
+            sender = new SpoutSender(SENDER_NAME);
+        }
+        return sender;
+    }
+
+    private synchronized void closeSender() {
+        if (sender != null) {
+            sender.close();
+            sender = null;
+        }
+    }
+
+    private void runOnMainThread(Runnable action, String op) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.isSameThread()) {
-            stopOnMainThread(managerId);
+            action.run();
             return;
         }
         CompletableFuture<Void> future = new CompletableFuture<>();
         mc.execute(() -> {
             try {
-                stopOnMainThread(managerId);
+                action.run();
                 future.complete(null);
             } catch (Exception e) {
                 future.completeExceptionally(e);
@@ -257,84 +396,11 @@ public enum StreamManager {
         try {
             future.get(2, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            LiveHelper.LOGGER.warn("Stop manager {} timed out", managerId);
+            LiveHelper.LOGGER.warn("{} timed out", op);
         } catch (CancellationException e) {
             // ignored
         } catch (Exception e) {
-            throw new RuntimeException("Failed to stop manager " + managerId, e);
-        }
-    }
-
-    private synchronized void stopOnMainThread(int managerId) {
-        StreamInstance instance = activeStreams.remove(managerId);
-        if (instance != null) {
-            instance.close();
-            LiveHelper.LOGGER.info("Stopped stream for manager: {}", managerId);
-        }
-        if (managerId == cueManagerId) cueManagerId = -1;
-        if (managerId == baseManagerId) baseManagerId = -1;
-    }
-
-    public synchronized void stopAll() {
-        for (int id : new ArrayList<>(activeStreams.keySet())) {
-            StreamInstance instance = activeStreams.get(id);
-            if (instance != null) {
-                instance.close();
-                activeStreams.remove(id);
-            }
-        }
-        cueManagerId = -1;
-        baseManagerId = -1;
-        StaticTrackTemplate.resetAllStates();
-    }
-
-    public boolean hasActive() {
-        return !activeStreams.isEmpty();
-    }
-
-    public StreamStatus getStatus(int managerId) {
-        return activeStreams.containsKey(managerId) ? StreamStatus.RUNNING : StreamStatus.STOPPED;
-    }
-
-    public Set<Integer> getActiveStreamIds() {
-        return activeStreams.keySet();
-    }
-
-    public void prepareDueFrames() {
-        if (activeStreams.isEmpty()) return;
-        long nowNs = System.nanoTime();
-        for (StreamInstance instance : activeStreams.values()) {
-            instance.prepareFrameIfDue(nowNs);
-        }
-        checkCueCompletion();
-    }
-
-    /**
-     * 切机位的时间线走完（非循环）就自动返回常驻机位。
-     *
-     * <p>这就是「触发器是切换而不是重播」的落点：cue 播完即回，镜头回到常驻全景，
-     * 下一次触发再切过去。循环的 cue 永远不会自动返回——那是用户明确要常驻的选择。
-     */
-    private void checkCueCompletion() {
-        int cue = cueManagerId;
-        if (cue <= 0) return;
-        StreamInstance instance = activeStreams.get(cue);
-        if (instance == null) {
-            cueManagerId = -1;
-            return;
-        }
-        // locked 的切机位不自动返回：它会作为额外推流源继续存在，语义与常驻机位一致。
-        Manager manager = StorageManager.getInstance().getManager(cue);
-        if (manager != null && manager.locked()) return;
-        if (instance.isTimelineFinished()) {
-            clearCueOnMainThread();
-        }
-    }
-
-    public void sendPreparedFrames() {
-        if (activeStreams.isEmpty()) return;
-        for (StreamInstance instance : activeStreams.values()) {
-            instance.sendPreparedFrame();
+            LiveHelper.LOGGER.error("{} failed", op, e);
         }
     }
 

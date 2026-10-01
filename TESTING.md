@@ -76,7 +76,9 @@ curl -X POST http://localhost:23512/api/managers ^
 
 1. 启动 OBS Studio 并确认已安装 Spout2 Capture 插件
 2. 添加来源 `Spout2 Capture`
-3. Sender 名称选 `LiveHelper-Main Stream`（若未出现，先执行下一步启动 Manager）
+3. Sender 名称选 **`LiveHelper`**（固定名；若未出现，先执行下一步启动推流）
+
+> 从旧版本升级：原先按 `LiveHelper-<Manager 名>` 选中的源已失效，需重新选 `LiveHelper`。
 
 ## 9. 启动推流
 
@@ -84,7 +86,7 @@ curl -X POST http://localhost:23512/api/managers ^
 curl -X POST http://localhost:23512/api/managers/1/start
 ```
 
-预期：Minecraft 不崩溃；日志显示 Manager 已启动；OBS 出现 `LiveHelper-Main Stream` sender 并显示虚拟机位画面；本机视角同步跟随虚拟机位（当前实现接管主摄像机）。
+预期：Minecraft 不崩溃；日志显示 base manager 已启动；OBS 出现 `LiveHelper` sender 并显示虚拟机位画面；本机视角同步跟随虚拟机位（当前实现接管主摄像机）。
 
 ```bash
 curl http://localhost:23512/api/managers/1/status
@@ -115,17 +117,16 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 
 预期状态变为 `stopped`，资源释放，OBS 画面停止更新或 Sender 消失。
 
-## 12. 双机位（可选）
+## 12. 多个 Manager 同时运行（可选）
 
-1. 创建第二个 Clip 和 Manager，将需要并行保留的那个设为 `locked: true`
+1. 创建第二个 Clip 和 Manager，将需要保留的那个设为 `locked: true`
 2. 启动两个 Manager
-3. OBS 添加两个 Spout2 Capture 源
 
-预期出现 `LiveHelper-<A>` 与 `LiveHelper-<B>` 两个 sender，画面独立更新。未设 `locked` 的旧 Manager 在新 Manager 启动时自动停止。
+预期：日志提示一次「只有当前机位会被推送」。OBS 里仍然只有 `LiveHelper` 一个 sender，画面是当前输出拥有者（切机位优先，其次常驻机位）。未设 `locked` 的旧 Manager 会在新 Manager 启动时自动停止。
 
 ## 13. 触发器与切机位
 
-1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`，且**不要设 `locked`**）
+1. 先 `/livehelper start 1` 启动一个**常驻机位**（建议 `loop: true`）
 2. 建第二个**关闭 `loop`** 的 Manager 作为切机位片段
 3. 新建触发规则：类型如 `entity_kill` / `damage`，目标指向第二个 Manager
 4. 用 `/livehelper trigger id <id> test` 立即试切
@@ -133,12 +134,9 @@ curl -X POST http://localhost:23512/api/managers/1/stop
 预期：
 
 - `/livehelper status` 显示 `常驻=#1 ... | 切机位=#2 ...`
-- 切过去的片段播完后**自动回到常驻机位 #1**
-- 切机位的 Spout sender 在片段结束时**消失**（OBS 的 Spout2 Capture 源列表里 `LiveHelper-<切机位名>` 应当不见），画面回到常驻机位
+- 切过去的片段播完后**自动回到常驻机位 #1**，OBS 画面全程停在同一个 `LiveHelper` 源上、内容自动变化
 - `/livehelper trigger back` 可立即结束当前切机位并返回
 - 没有常驻机位时，触发器会退化为常驻启动并在日志里提示一次
-
-如果观察到「两个 sender 同时存在」：常驻机位若设了 `locked`，切机位期间它的 sender 仍会注册（画面冻结在最后一帧）。把它取消勾选即可，切机位期间就只有切机位一个源。
 
 ## 14. 单元测试
 
