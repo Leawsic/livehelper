@@ -319,6 +319,12 @@ public final class ApiServer {
                 }
                 JsonObject res = new JsonObject();
                 res.addProperty("status", StreamManager.INSTANCE.getStatus(id).name().toLowerCase());
+                // 只有一个 Spout sender，OBS 里永远只有一路输出。
+                // Web UI 必须能区分「在跑」与「正在推送」，否则会把每个在跑的
+                // Manager 都误显示成一路独立推流。
+                res.addProperty("outputOwnerId", StreamManager.INSTANCE.getOutputOwnerId());
+                res.addProperty("baseManagerId", StreamManager.INSTANCE.getBaseManagerId());
+                res.addProperty("cueManagerId", StreamManager.INSTANCE.getCueManagerId());
                 sendJson(exchange, 200, res.toString());
             }
             default -> sendError(exchange, 404, "Unknown action: " + action);

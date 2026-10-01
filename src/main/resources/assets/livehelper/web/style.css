@@ -147,10 +147,11 @@ main { padding: 30px 32px 64px; }
     font-size: 12px;
 }
 .badge.id { color: #fef3c7; background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.32); }
-.badge.running { color: #bbf7d0; background: rgba(34, 197, 94, 0.16); border-color: rgba(34, 197, 94, 0.36); }
 .badge.stopped { color: #cbd5e1; }
 .badge.good { color: #bbf7d0; background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.32); }
 .badge.warn { color: #fde68a; background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.34); }
+/* 区分「在跑」与「正在推送」：OBS 只有一路输出，待命机位不该看起来像在播。 */
+.role-line { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
 .copy-badge, .inline-copy {
     cursor: copy;
     font: inherit;

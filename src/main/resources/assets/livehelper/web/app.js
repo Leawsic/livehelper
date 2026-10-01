@@ -158,9 +158,9 @@ async function refreshAll() {
         }
         statuses = new Map(await Promise.all(managers.map(async manager => {
             try {
-                return [manager.id, (await API.getManagerStatus(manager.id)).status];
+                return [manager.id, await API.getManagerStatus(manager.id)];
             } catch (_) {
-                return [manager.id, 'unknown'];
+                return [manager.id, {status: 'unknown'}];
             }
         })));
         renderWorldStatus();
@@ -192,6 +192,26 @@ function setBusy(busy) {
     document.querySelectorAll('button').forEach(button => button.disabled = busy && !button.closest('dialog'));
 }
 
+/**
+ * 单 sender 架构下「在跑」不等于「正在推送」：OBS 里只有一路输出，
+ * 归属规则是 cue 优先、其次 base。其余在跑的机位只是待命，
+ * 把它们显示成独立推流会让人误以为 OBS 里有多个画面。
+ */
+function streamRole(manager) {
+    const info = statuses.get(manager.id) || {status: 'stopped'};
+    if (info.status !== 'running') {
+        return {onAir: false, badge: 'stopped', label: '已停止'};
+    }
+    if (info.outputOwnerId === manager.id) {
+        return {
+            onAir: true,
+            badge: 'good',
+            label: info.cueManagerId === manager.id ? '正在推送 · 切机位' : '正在推送 · 常驻机位'
+        };
+    }
+    return {onAir: false, badge: 'warn', label: '在跑但未输出（OBS 画面来自其他机位）'};
+}
+
 function renderOverview() {
     const root = byId('overview-content');
     root.innerHTML = '';
@@ -200,20 +220,21 @@ function renderOverview() {
         return;
     }
     managers.forEach(manager => {
-        const status = statuses.get(manager.id) || 'stopped';
+        const role = streamRole(manager);
         const totalDuration = managerDuration(manager);
         root.appendChild(card(`
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
                 <span class="badge id">Manager #${manager.id}</span>
-                <span class="badge ${status}">${status}</span>
+                <span class="badge ${role.badge}">${role.onAir ? 'ON AIR' : role.label}</span>
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 ${manager.loop ? '<span class="badge good">Loop</span>' : ''}
                 ${manager.locked ? '<span class="badge warn">Locked</span>' : ''}
                 <span class="badge">${totalDuration}ms</span>
             </div>
-            <p>OBS Sender: <strong>LiveHelper-${escapeHtml(manager.name)}</strong></p>
+            <p>OBS Sender: <strong>LiveHelper</strong>（全局唯一，所有机位共用同一个）</p>
+            <p class="role-line">${role.label}</p>
             <p>${manager.clips?.length || 0} clips, render distance ${manager.renderDistance}</p>
             <div class="card-actions">
                 <button class="primary" data-start-manager="${manager.id}">启动</button>
@@ -395,11 +416,11 @@ function renderManagers() {
     const root = byId('managers-list');
     root.innerHTML = '';
     if (!managers.length) {
-        root.innerHTML = '<div class="empty">暂无 Manager。创建后即可启动 Spout Sender。</div>';
+        root.innerHTML = '<div class="empty">暂无 Manager。创建后启动任一机位，即会在 OBS 中建立唯一的 <strong>LiveHelper</strong> sender。</div>';
         return;
     }
     managers.forEach(manager => {
-        const status = statuses.get(manager.id) || 'stopped';
+        const role = streamRole(manager);
         const slots = (manager.clips || []).map(slot => {
             const clip = clips.find(c => c.id === slot.clipId);
             const label = clip ? `${escapeHtml(clip.name)} (${clip.template}, ${clip.duration}ms)` : '(missing)';
@@ -411,7 +432,7 @@ function renderManagers() {
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
                 <span class="badge id">Manager #${manager.id}</span>
-                <span class="badge ${status}">${status}</span>
+                <span class="badge ${role.badge}">${role.onAir ? 'ON AIR' : role.label}</span>
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 <span class="badge">RD ${manager.renderDistance}</span>
@@ -582,7 +603,7 @@ function openManagerEditor(manager = null) {
     byId('editor-title').textContent = isEdit ? `编辑 Manager #${data.id}` : '新建 Manager';
     byId('editor-fields').innerHTML = `
         <div class="form-grid">
-            <label>名称<input data-field="name" value="${escapeAttr(data.name)}" placeholder="OBS Sender 会显示为 LiveHelper-名称"></label>
+            <label>名称<input data-field="name" value="${escapeAttr(data.name)}" placeholder="仅用于区分机位，不影响 OBS sender 名"></label>
             <label>FPS<input data-field="fps" type="number" min="1" max="240" value="${data.fps || 30}"></label>
             <label>宽度<input data-field="width" type="number" min="16" value="${data.width || 1280}"></label>
             <label>高度<input data-field="height" type="number" min="16" value="${data.height || 720}"></label>
@@ -594,7 +615,7 @@ function openManagerEditor(manager = null) {
                 }</option>`).join('')}</select>
                 <span class="help">pingpong 会把整条时间线折返播放，首尾姿态接近时观感最好，适合来回扫摇的监控机位。</span>
             </label>
-            <label class="checkline"><input data-field="locked" type="checkbox" ${data.locked ? 'checked' : ''}>锁定推流</label>
+            <label class="checkline"><input data-field="locked" type="checkbox" ${data.locked ? 'checked' : ''}>锁定（启动别的机位时不被停掉，切机位也不会自动返回）</label>
             <div class="timeline-builder full">
                 <div class="section-head"><div><h3>时间线片段</h3><p class="help">无需记 Clip ID，直接从下拉框选择。</p></div><button type="button" id="add-slot">添加片段</button></div>
                 <div id="slot-list"></div>
