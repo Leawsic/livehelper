@@ -88,6 +88,8 @@ curl -X POST http://localhost:23512/api/managers/1/start
 
 预期：Minecraft 不崩溃；日志显示 base manager 已启动；OBS 出现 `LiveHelper` sender 并显示虚拟机位画面；本机视角同步跟随虚拟机位（当前实现接管主摄像机）。
 
+**重点观察 MC 本机窗口**：从启动推流开始，视角应稳定保持在虚拟相机上，**不应在相机视角与玩家视角之间来回闪**。若出现闪烁，通常是 Manager 的 fps 低于游戏渲染帧率时的产出间隔处理问题，或时间线上存在片段空档（`startOffset` 与上一个 Clip 结束时间之间有间隙）——后者会在日志里提示一次 `has no active clip`。
+
 ```bash
 curl http://localhost:23512/api/managers/1/status
 ```

@@ -251,33 +251,38 @@ public enum StreamManager {
         }
 
         int owner = outputOwnerId();
-        boolean ownerHasFrame = false;
-        for (Map.Entry<Integer, StreamInstance> entry : streams.entrySet()) {
-            FrameCommandHolder holder = poll(entry.getValue(), nowNs);
-            if (entry.getKey() != owner) continue;
-            if (holder.frame == null) continue;
-            ownerHasFrame = true;
-            ActiveRenderContext.setPersistent(holder.frame, holder.width, holder.height, holder.renderDistance);
-        }
-
-        if (ownerHasFrame) {
-            frameReady = true;
-        } else {
-            // 拥有者当前没有画面（时间线空档/已走完/被暂停）：交回玩家视角。
+        if (owner < 0) {
             ActiveRenderContext.clearPersistent();
             frameReady = false;
+            return;
         }
-    }
 
-    private record FrameCommandHolder(site.leawsic.livehelper.model.FrameCommand frame,
-                                      int width, int height, int renderDistance) {}
+        StreamInstance instance = streams.get(owner);
+        if (instance == null) {
+            ActiveRenderContext.clearPersistent();
+            frameReady = false;
+            return;
+        }
 
-    private FrameCommandHolder poll(StreamInstance instance, long nowNs) {
-        var frame = instance.pollFrame(nowNs);
-        if (frame == null) return new FrameCommandHolder(null, 0, 0, 0);
-        Minecraft mc = Minecraft.getInstance();
-        return new FrameCommandHolder(frame,
-            mc.getWindow().getWidth(), mc.getWindow().getHeight(), instance.renderDistance());
+        StreamInstance.Frame frame = instance.pollFrame(nowNs);
+        switch (frame.status()) {
+            case PRODUCED -> {
+                ActiveRenderContext.setPersistent(frame.command(),
+                    mc.getWindow().getWidth(), mc.getWindow().getHeight(), instance.renderDistance());
+                frameReady = true;
+            }
+            case NOT_DUE -> {
+                // 没到本 Manager 的产出时机：保持现有渲染上下文不动。
+                // Manager 的 fps 低于游戏渲染帧率时，每两次产出之间会经过多个 MC 帧，
+                // 若在这里清空上下文，MC 画面就会在相机视角与玩家视角之间来回闪。
+                // frameReady 保持原值：画面已经在上下文里，不需要重复推送同一帧。
+            }
+            case EMPTY -> {
+                // 到了产出时机但时间线上没有活跃片段：交回玩家视角。
+                ActiveRenderContext.clearPersistent();
+                frameReady = false;
+            }
+        }
     }
 
     /**

@@ -29,6 +29,8 @@ public class StreamInstance {
 
     /** 最后一帧通过消毒的相机参数；单帧异常时回退到这里，避免 NaN 污染整段推流。 */
     private FrameCommand lastGoodFrame;
+    /** 时间线空档只提示一次，避免每帧刷日志。 */
+    private boolean reportedEmptyTimeline;
 
     public StreamInstance(int managerId, Manager manager, PlaybackEngine engine) {
         this.managerId = managerId;
@@ -82,26 +84,55 @@ public class StreamInstance {
     }
 
     /**
+     * 本帧的产出状态。
+     *
+     * <p>必须区分「没到产出时机」和「真的没有画面」：Manager 的 fps 通常低于游戏渲染帧率，
+     * 两个相邻 MC 帧之间多半还没到 Manager 的产出点。若把前者当成后者去清空渲染上下文，
+     * MC 画面就会在相机视角与玩家视角之间来回闪（OBS 反而看不出问题，因为 Spout 只在产出时推，
+     * 画面留在 OBS 缓冲里）。
+     */
+    public enum FrameStatus {
+        /** 还没到本 Manager 的产出时机：应保持现有渲染上下文不动。 */
+        NOT_DUE,
+        /** 产出了相机参数。 */
+        PRODUCED,
+        /** 到了产出时机但时间线上没有活跃片段（片段空档 / 已走完）。 */
+        EMPTY
+    }
+
+    /** 一次产出的结果。 */
+    public record Frame(FrameStatus status, FrameCommand command) {}
+
+    /**
      * 若本帧已到产出时机，返回该帧的相机参数。
      *
-     * @return 相机参数；未到时间点、时间线空档、或不可用且无兜底时返回 null
+     * @return 产出状态与相机参数；未到时间点时 command 为 null
      */
-    public FrameCommand pollFrame(long nowNs) {
-        if (stopped) return null;
-        if (nowNs - lastRenderNs < frameIntervalNs) return null;
+    public Frame pollFrame(long nowNs) {
+        if (stopped) {
+            return new Frame(FrameStatus.NOT_DUE, null);
+        }
+        if (nowNs - lastRenderNs < frameIntervalNs) {
+            return new Frame(FrameStatus.NOT_DUE, null);
+        }
         lastRenderNs = nowNs;
 
         FrameCommand raw = engine.computeFrame();
         FrameCommand cmd = PlaybackEngine.sanitize(raw, lastGoodFrame);
         if (cmd == null) {
-            return null;
+            if (!reportedEmptyTimeline) {
+                reportedEmptyTimeline = true;
+                LiveHelper.LOGGER.warn("Manager #{} has no active clip at this point; "
+                    + "check for gaps between startOffset and clip duration", managerId);
+            }
+            return new Frame(FrameStatus.EMPTY, null);
         }
         if (cmd != raw) {
             LiveHelper.LOGGER.warn("Manager {} produced an unusable frame ({}); reusing last valid camera state",
                     managerId, describe(raw));
         }
         lastGoodFrame = cmd;
-        return cmd;
+        return new Frame(FrameStatus.PRODUCED, cmd);
     }
 
     public void stop() {
