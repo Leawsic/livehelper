@@ -74,11 +74,7 @@ public class StreamInstance {
         lastRenderNs = System.nanoTime() - frameIntervalNs;
     }
 
-    public boolean isPausedForCue() {
-        return pausedForCue;
-    }
-
-    /** 时间线是否已走完（未开启循环）。切机位据此自动返回常驻机位。 */
+    /** 时间线是否已走完（未开启循环）。切机位据此收尾，有常驻就切回、没有就释放输出。 */
     public boolean isTimelineFinished() {
         return engine.isFinished();
     }

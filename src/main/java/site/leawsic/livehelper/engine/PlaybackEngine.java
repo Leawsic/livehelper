@@ -86,6 +86,7 @@ public class PlaybackEngine {
         }
     }
 
+    /** 时钟是否处于暂停。切机位期间常驻机位靠它冻结时间线，由 PlaybackEngineClockTest 锁定语义。 */
     public boolean isClockPaused() {
         return pausedAtNs != 0L;
     }

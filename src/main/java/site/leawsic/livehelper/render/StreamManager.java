@@ -63,7 +63,6 @@ public enum StreamManager {
     private SpoutSender sender;
     /** 本帧是否已产出可推送的画面。 */
     private boolean frameReady;
-    private boolean warnedMultipleRunning = false;
 
     // ── 常驻机位 ─────────────────────────────────────────────
 
@@ -82,7 +81,6 @@ public enum StreamManager {
         }
         releaseCueOnMainThread();
         stopUnlockedExcept(managerId);
-        warnIfMultipleRunning(managerId);
         streams.put(managerId, new StreamInstance(managerId, manager, newEngine(manager)));
         baseManagerId = managerId;
         LiveHelper.LOGGER.info("Started base manager #{} ({}), Spout sender '{}'",
@@ -427,13 +425,6 @@ public enum StreamManager {
                 instance.stop();
             }
         }
-    }
-
-    private void warnIfMultipleRunning(int aboutToStart) {
-        if (warnedMultipleRunning || streams.size() < 1) return;
-        warnedMultipleRunning = true;
-        LiveHelper.LOGGER.warn("More than one manager is running. Spout output is now a single stream, so only the "
-            + "active camera (cut manager, else base) is sent; locked managers no longer produce separate OBS sources.");
     }
 
     private synchronized SpoutSender sender() {

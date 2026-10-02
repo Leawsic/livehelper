@@ -3,22 +3,25 @@ package site.leawsic.livehelper.util;
 import site.leawsic.livehelper.model.FrameCommand;
 
 public final class ActiveRenderContext {
-    private static final ThreadLocal<Context> ACTIVE = new ThreadLocal<>();
-    private static volatile Context fallbackActive = null;
+    /**
+     * 接管中的渲染上下文。
+     *
+     * <p>只有一个写入方 {@link #setPersistent}：主摄像机接管式推流每产出一帧就写一次。
+     * 早前还并存过一套离屏渲染方案的 ThreadLocal 与 fallback 字段，但已无任何写入方，
+     * 留着只会让 {@link #isOffscreenActive()} 永远读到一个恒为 null 的分支——那正是
+     * HUD 与第一人称手臂抑制长期失效的原因，现已删除。
+     */
     private static volatile Context persistentActive = null;
 
     private ActiveRenderContext() {}
 
+    /** 镜头当前是否被虚拟相机接管。CameraSetup 与 HUD/手臂抑制都以此为准。 */
     public static boolean isOffscreenActive() {
-        // persistentActive 是当前唯一会被写入的入口：主摄像机接管式推流走的就是它。
-        // 早期离屏渲染方案遗留的 ACTIVE / fallbackActive 已无写入方，但仍保留判断以防后续复用。
-        return ACTIVE.get() != null || fallbackActive != null || persistentActive != null;
+        return persistentActive != null;
     }
 
+    /** 当前生效的帧；null 表示镜头已交还玩家。 */
     public static Context current() {
-        Context context = ACTIVE.get();
-        if (context != null) return context;
-        if (fallbackActive != null) return fallbackActive;
         return persistentActive;
     }
 
