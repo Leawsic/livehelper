@@ -203,12 +203,13 @@ public final class LiveHelperCommands {
             send(source, "目标 Manager 不存在: #" + rule.targetManager());
             return 0;
         }
-        boolean asCue = StreamManager.INSTANCE.cutTo(rule.targetManager());
-        send(source, asCue
-            ? "已按触发规则 #" + id + " 切到 manager #" + rule.targetManager() + "（" + manager.name()
-                + "）；若该 Manager 未开启循环，播完会自动回常驻机位 #" + StreamManager.INSTANCE.getBaseManagerId() + "。"
-            : "已按触发规则 #" + id + " 启动 manager #" + rule.targetManager() + "（" + manager.name()
-                + "）；当前没有可返回的常驻机位，已按常驻方式启动。");
+        StreamManager.INSTANCE.cutTo(rule.targetManager());
+        int base = StreamManager.INSTANCE.getBaseManagerId();
+        String tail = base > 0
+            ? "；若该 Manager 未开启循环，播完会自动回常驻机位 #" + base + "。"
+            : "；当前没有常驻机位，播完会释放输出并把镜头交还给你。";
+        send(source, "已按触发规则 #" + id + " 切到 manager #" + rule.targetManager()
+            + "（" + manager.name() + "）" + tail);
         return id;
     }
 
@@ -356,16 +357,19 @@ public final class LiveHelperCommands {
             send(source, "Manager 不存在: #" + managerId);
             return 0;
         }
-        if (StreamManager.INSTANCE.getBaseManagerId() <= 0) {
-            send(source, "没有常驻机位，#1 之类的常驻机位需要先用 /livehelper start <id> 启动；"
-                + "否则切机位不会自动返回。");
+        int base = StreamManager.INSTANCE.getBaseManagerId();
+        StreamManager.INSTANCE.cutTo(managerId);
+        String tail;
+        if (manager.loop()) {
+            tail = base > 0
+                ? "该 Manager 开启了循环，不会自动返回，用 /livehelper cue back 手动返回。"
+                : "该 Manager 开启了循环，不会结束；要停止请用 /livehelper stop " + managerId + "。";
+        } else if (base > 0) {
+            tail = "播完自动返回常驻机位 #" + base + "。";
+        } else {
+            tail = "当前没有常驻机位，播完会释放输出并把镜头交还给你（之后可再次触发）。";
         }
-        boolean asCue = StreamManager.INSTANCE.cutTo(managerId);
-        send(source, asCue
-            ? "已切到 manager #" + managerId + "（" + manager.name() + "）；"
-                + (manager.loop() ? "该 Manager 开启了循环，不会自动返回，用 /livehelper cue back 手动返回。"
-                                 : "播完自动返回常驻机位 #" + StreamManager.INSTANCE.getBaseManagerId() + "。")
-            : "已把 manager #" + managerId + "（" + manager.name() + "）作为常驻机位启动。");
+        send(source, "已切到 manager #" + managerId + "（" + manager.name() + "）；" + tail);
         return managerId;
     }
 

@@ -38,7 +38,8 @@ import java.util.concurrent.TimeoutException;
  * <p>机位模型：
  * <ul>
  *   <li><b>常驻机位</b>（base）：{@link #start} 手动启动，持续推流直到手动停止。</li>
- *   <li><b>切机位</b>（cue）：触发器或 {@link #cutTo} 产生，时间线播完自动返回常驻机位。</li>
+ *   <li><b>切机位</b>（cue）：触发器或 {@link #cutTo} 产生，时间线播完自动收尾——
+ *       有常驻机位就切回去，没有就释放输出。</li>
  * </ul>
  * 同一时刻只有「当前输出拥有者」会写入渲染上下文并推流，拥有者为 cue 优先、其次常驻机位。
  */
@@ -62,7 +63,6 @@ public enum StreamManager {
     private SpoutSender sender;
     /** 本帧是否已产出可推送的画面。 */
     private boolean frameReady;
-    private boolean warnedNoBase = false;
     private boolean warnedMultipleRunning = false;
 
     // ── 常驻机位 ─────────────────────────────────────────────
@@ -92,12 +92,13 @@ public enum StreamManager {
     // ── 切机位 ───────────────────────────────────────────────
 
     /**
-     * 切到某个机位播一小段，播完自动返回常驻机位。触发器走这条路径。
+     * 切到某个机位播一小段，播完自动收尾。触发器走这条路径。
      *
      * <p>与 {@link #start} 的区别正是「切换」与「重播」的差别：start 之后该 Manager 会一直
-     * 推流直到手动停止；cutTo 只是临时接管画面。
+     * 推流直到手动停止；cutTo 只是临时接管画面，播完有常驻机位就切回去，没有就释放输出。
+     * 两种情况下可重复触发的规则都能再次把它切回来。
      *
-     * @return 是否按「切机位」处理；false 表示退化成常驻启动（没有可返回的目标）
+     * @return 是否按「切机位」处理
      */
     public boolean cutTo(int managerId) {
         return cutToResult(managerId, "cutTo");
@@ -131,15 +132,7 @@ public enum StreamManager {
     }
 
     private synchronized boolean cutToOnMainThread(int managerId, Manager target) {
-        if (baseManagerId <= 0 || !streams.containsKey(baseManagerId)) {
-            if (!warnedNoBase) {
-                warnedNoBase = true;
-                LiveHelper.LOGGER.warn("No base manager running; manager #{} becomes the base and will not auto-return. "
-                    + "Run /livehelper start <id> first to get auto-return.", managerId);
-            }
-            startOnMainThread(managerId);
-            return false;
-        }
+        if (managerId == cueManagerId) return true;
         if (managerId == baseManagerId) {
             clearCueOnMainThread();
             return true;
@@ -156,7 +149,16 @@ public enum StreamManager {
         }
         streams.put(managerId, new StreamInstance(managerId, target, newEngine(target)));
         cueManagerId = managerId;
-        LiveHelper.LOGGER.info("Cut to manager #{} ({}), base #{} paused", managerId, target.name(), baseManagerId);
+        if (base != null) {
+            LiveHelper.LOGGER.info("Cut to manager #{} ({}), base #{} paused", managerId, target.name(), baseManagerId);
+        } else {
+            // 没有常驻机位时，切机位播完就整条交还输出。早前这里退化成 startOnMainThread，
+            // 于是它变成常驻机位、而常驻机位没有结束路径：画面冻在最后一帧、玩家视角已交还，
+            // 但输出一直被占着 ON AIR，且可重复触发的规则再切回来只会命中「已经是常驻」
+            // 分支而空转。「没有可返回的目标」只该决定结束之后去哪，不该决定它是否结束。
+            LiveHelper.LOGGER.info("Cut to manager #{} ({}), no base running: output will be released when it ends",
+                managerId, target.name());
+        }
         return true;
     }
 
@@ -252,8 +254,9 @@ public enum StreamManager {
             ActiveRenderContext.clearPersistent();
             return;
         }
-        // 先结算切机位：可能关闭 cue 并恢复常驻机位，恢复后本轮就能补上它的画面，不闪帧。
-        checkCueCompletion();
+        // 先结算时间线走完的机位：可能关闭 cue 并恢复常驻机位，也可能整条释放输出。
+        // 恢复后本轮就能补上它的画面，不闪帧。
+        checkOutputCompletion();
 
         long nowNs = System.nanoTime();
         Minecraft mc = Minecraft.getInstance();
@@ -299,21 +302,72 @@ public enum StreamManager {
     }
 
     /**
-     * 切机位时间线走完（且未开启循环、未设 locked）就自动返回常驻机位。
+     * 时间线走完后该怎么收尾。
+     *
+     * <p>抽成纯函数是为了把这个契约钉死在单元测试里：它此前被内联在
+     * {@link #checkOutputCompletion()} 中并与 Minecraft 单例纠缠，导致「没有常驻机位时
+     * 切机位会不会结束」这种问题只能靠实机试出来。
      */
-    private void checkCueCompletion() {
-        int cue = cueManagerId;
-        if (cue <= 0) return;
-        StreamInstance instance = streams.get(cue);
-        if (instance == null) {
-            cueManagerId = -1;
-            return;
+    static CompletionAction decideCompletion(boolean ownerIsCue, int baseManagerId,
+                                             boolean timelineFinished, boolean loop, boolean locked) {
+        if (!timelineFinished || loop || locked) {
+            return CompletionAction.KEEP_RUNNING;
         }
-        Manager manager = StorageManager.getInstance().getManager(cue);
-        if (manager != null && manager.locked()) return;
-        if (instance.isTimelineFinished()) {
+        // 只有「切机位 + 有常驻可回」才切回去；其余情况一律释放输出，
+        // 免得该机位一直占着输出却不再更新画面，且再也切不走。
+        return ownerIsCue && baseManagerId > 0
+            ? CompletionAction.RETURN_TO_BASE
+            : CompletionAction.RELEASE_OUTPUT;
+    }
+
+    enum CompletionAction {
+        KEEP_RUNNING, RETURN_TO_BASE, RELEASE_OUTPUT
+    }
+
+    /**
+     * 结算输出拥有者的时间线。
+     *
+     * <p>切机位有常驻可回就切回去；没有就整条释放。常驻机位自身走完也释放——否则它会一直
+     * 占着输出，表现为画面冻在最后一帧、玩家视角已交还，但 OBS 源不再更新、状态仍是
+     * ON AIR，触发器也再也切不走它。
+     */
+    private void checkOutputCompletion() {
+        int owner = outputOwnerId();
+        if (owner <= 0) return;
+        StreamInstance instance = streams.get(owner);
+        if (instance == null) return;
+        Manager manager = StorageManager.getInstance().getManager(owner);
+        boolean ownerIsCue = owner == cueManagerId;
+        CompletionAction action = decideCompletion(
+            ownerIsCue,
+            baseManagerId,
+            instance.isTimelineFinished(),
+            manager != null && manager.loop(),
+            manager != null && manager.locked());
+        if (action == CompletionAction.RETURN_TO_BASE) {
             clearCueOnMainThread();
+        } else if (action == CompletionAction.RELEASE_OUTPUT) {
+            if (ownerIsCue) {
+                clearCueOnMainThread();
+            } else {
+                releaseFinishedBaseOnMainThread();
+            }
         }
+    }
+
+    /** 常驻机位的时间线走完：没有别的东西可回，直接释放输出并停止该机位。 */
+    private synchronized void releaseFinishedBaseOnMainThread() {
+        int base = baseManagerId;
+        baseManagerId = -1;
+        StreamInstance instance = streams.remove(base);
+        if (instance != null) {
+            instance.stop();
+        }
+        if (streams.isEmpty()) {
+            frameReady = false;
+            ActiveRenderContext.clearPersistent();
+        }
+        LiveHelper.LOGGER.info("Base manager #{} finished; no base to fall back to, output released", base);
     }
 
     public void sendPreparedFrames() {

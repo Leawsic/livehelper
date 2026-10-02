@@ -193,23 +193,25 @@ function setBusy(busy) {
 }
 
 /**
- * 单 sender 架构下「在跑」不等于「正在推送」：OBS 里只有一路输出，
- * 归属规则是 cue 优先、其次 base。其余在跑的机位只是待命，
- * 把它们显示成独立推流会让人误以为 OBS 里有多个画面。
+ * 单 sender 架构下「在跑」不等于「正在推送」：OBS 里只有一路输出（cue 优先、其次 base）。
+ * 其余在跑的机位只是待命，把它们显示成独立推流会让人误以为 OBS 里有多个画面。
  */
 function streamRole(manager) {
     const info = statuses.get(manager.id) || {status: 'stopped'};
-    if (info.status !== 'running') {
-        return {onAir: false, badge: 'stopped', label: '已停止'};
+    const running = info.status === 'running';
+    const onAir = running && info.outputOwnerId === manager.id;
+    let note = '';
+    if (onAir) {
+        note = info.cueManagerId === manager.id ? '正在推送 · 切机位' : '正在推送 · 常驻机位';
+    } else if (running) {
+        note = '待命，未进 OBS';
     }
-    if (info.outputOwnerId === manager.id) {
-        return {
-            onAir: true,
-            badge: 'good',
-            label: info.cueManagerId === manager.id ? '正在推送 · 切机位' : '正在推送 · 常驻机位'
-        };
-    }
-    return {onAir: false, badge: 'warn', label: '在跑但未输出（OBS 画面来自其他机位）'};
+    return {running, onAir, note};
+}
+
+function roleBadge(role) {
+    if (role.onAir) return '<span class="badge good">ON AIR</span>';
+    return role.running ? '<span class="badge warn">待命</span>' : '<span class="badge stopped">已停止</span>';
 }
 
 function renderOverview() {
@@ -226,15 +228,14 @@ function renderOverview() {
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
                 <span class="badge id">Manager #${manager.id}</span>
-                <span class="badge ${role.badge}">${role.onAir ? 'ON AIR' : role.label}</span>
+                ${roleBadge(role)}
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 ${manager.loop ? '<span class="badge good">Loop</span>' : ''}
                 ${manager.locked ? '<span class="badge warn">Locked</span>' : ''}
                 <span class="badge">${totalDuration}ms</span>
             </div>
-            <p>OBS Sender: <strong>LiveHelper</strong>（全局唯一，所有机位共用同一个）</p>
-            <p class="role-line">${role.label}</p>
+            ${role.note ? `<p class="role-line">${role.note}</p>` : ''}
             <p>${manager.clips?.length || 0} clips, render distance ${manager.renderDistance}</p>
             <div class="card-actions">
                 <button class="primary" data-start-manager="${manager.id}">启动</button>
@@ -432,7 +433,7 @@ function renderManagers() {
             <h3>${escapeHtml(manager.name)}</h3>
             <div class="badge-row">
                 <span class="badge id">Manager #${manager.id}</span>
-                <span class="badge ${role.badge}">${role.onAir ? 'ON AIR' : role.label}</span>
+                ${roleBadge(role)}
                 <span class="badge">${manager.width}x${manager.height}</span>
                 <span class="badge">${manager.fps}fps</span>
                 <span class="badge">RD ${manager.renderDistance}</span>

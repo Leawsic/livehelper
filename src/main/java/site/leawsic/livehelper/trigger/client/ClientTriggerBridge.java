@@ -237,10 +237,12 @@ public final class ClientTriggerBridge {
             }
             return;
         }
-        // 用 cutTo 而不是 start：触发器要做的是「切过去播一小段」，播完自动回常驻机位。
-        boolean asCue = StreamManager.INSTANCE.cutTo(managerId);
-        LiveHelper.LOGGER.info("Trigger '{}' ({}) -> manager #{}{}",
+        // 用 cutTo 而不是 start：触发器要做的是「切过去播一小段」，播完自动收尾——
+        // 有常驻机位就切回去，没有就释放输出，所以可重复触发的规则能一次次生效。
+        StreamManager.INSTANCE.cutTo(managerId);
+        int base = StreamManager.INSTANCE.getBaseManagerId();
+        LiveHelper.LOGGER.info("Trigger '{}' ({}) -> manager #{} ({})",
             rule.name(), rule.type(), managerId,
-            asCue ? " (cue, will auto-return)" : " (started as base)");
+            base > 0 ? "cue, will return to base" : "cue, will release output");
     }
 }
